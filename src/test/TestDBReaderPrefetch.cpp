@@ -27,6 +27,8 @@ int main(int, const char**) {
         }) || std::adjacent_find(ids.begin(), ids.end()) != ids.end()) {
         return EXIT_FAILURE;
     }
+    const std::vector<size_t> constIds(ids);
+    reader.prefetchData(constIds);
 
     for (size_t i = 0; i < reader.getSize(); ++i) {
         if (reader.getData(i, 0) == NULL || std::strlen(reader.getData(i, 0)) == 0) {

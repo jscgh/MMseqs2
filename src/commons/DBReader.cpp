@@ -63,6 +63,12 @@ void DBReader<T>::readMmapedDataInMemory(){
 }
 
 template <typename T>
+void DBReader<T>::prefetchData(const std::vector<size_t> &ids) {
+    std::vector<size_t> sortedIds(ids);
+    prefetchData(sortedIds);
+}
+
+template <typename T>
 void DBReader<T>::prefetchData(std::vector<size_t> &ids) {
     if (ids.empty() || !(dataMode & USE_DATA) || (dataMode & USE_FREAD)) {
         return;
