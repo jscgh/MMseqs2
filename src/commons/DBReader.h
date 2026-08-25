@@ -368,6 +368,8 @@ public:
 
     void readMmapedDataInMemory();
 
+    void prefetchData(const std::vector<size_t> &ids);
+
     void mlock();
 
     void sortIndex(bool isSortedById);

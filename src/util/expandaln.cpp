@@ -104,7 +104,8 @@ int expandaln(int argc, const char **argv, const Command& command, bool returnAl
     DBReader<DBKeyType> *resultBcReader = NULL;
     IndexReader *resultBcReaderIdx = NULL;
     if (Parameters::isEqualDbtype(FileUtil::parseDbType(par.db2.c_str()), Parameters::DBTYPE_INDEX_DB)) {
-        bool touch = (par.preloadMode != Parameters::PRELOAD_MODE_MMAP);
+        bool touch = (par.preloadMode == Parameters::PRELOAD_MODE_FREAD ||
+                      par.preloadMode == Parameters::PRELOAD_MODE_MMAP_TOUCH);
         cReaderIdx = new IndexReader(par.db2, par.threads,
                                      IndexReader::SRC_SEQUENCES,
                                      (touch) ? (IndexReader::PRELOAD_INDEX | IndexReader::PRELOAD_DATA) : 0);
@@ -116,13 +117,15 @@ int expandaln(int argc, const char **argv, const Command& command, bool returnAl
     } else {
         cReader = new DBReader<DBKeyType>(par.db2.c_str(), par.db2Index.c_str(), par.threads, DBReader<DBKeyType>::USE_INDEX | DBReader<DBKeyType>::USE_DATA);
         cReader->open(DBReader<DBKeyType>::NOSORT);
-        if (par.preloadMode != Parameters::PRELOAD_MODE_MMAP) {
+        if (par.preloadMode == Parameters::PRELOAD_MODE_FREAD ||
+            par.preloadMode == Parameters::PRELOAD_MODE_MMAP_TOUCH) {
             cReader->readMmapedDataInMemory();
         }
 
         resultBcReader = new DBReader<DBKeyType>(par.db4.c_str(), par.db4Index.c_str(), par.threads, DBReader<DBKeyType>::USE_INDEX | DBReader<DBKeyType>::USE_DATA);
         resultBcReader->open(DBReader<DBKeyType>::NOSORT);
-        if (par.preloadMode != Parameters::PRELOAD_MODE_MMAP) {
+        if (par.preloadMode == Parameters::PRELOAD_MODE_FREAD ||
+            par.preloadMode == Parameters::PRELOAD_MODE_MMAP_TOUCH) {
             resultBcReader->readMmapedDataInMemory();
         }
     }
@@ -153,6 +156,44 @@ int expandaln(int argc, const char **argv, const Command& command, bool returnAl
     SubstitutionMatrix subMat(par.scoringMatrixFile.values.aminoacid().c_str(), 2.0, par.scoreBias);
 
     const bool filterBc = par.expandFilterClusters;
+    if (par.preloadMode == Parameters::PRELOAD_MODE_AUTO) {
+        std::vector<size_t> alignmentIds;
+        std::vector<Matcher::result_t> prefetchResults;
+        for (size_t i = 0; i < resultAbReader->getSize(); ++i) {
+            char *data = resultAbReader->getData(i, 0);
+            while (*data != '\0') {
+                Matcher::result_t resultAb = Matcher::parseAlignmentRecord(data, false);
+                data = Util::skipLine(data);
+                if (returnAlnRes == false && resultAb.eval > par.evalProfile) {
+                    continue;
+                }
+                size_t id = resultBcReader->getId(resultAb.dbKey);
+                if (id != DB_ENTRY_NOT_FOUND) {
+                    alignmentIds.push_back(id);
+                }
+            }
+        }
+        resultBcReader->prefetchData(alignmentIds);
+
+        const bool needsTargetData = filterBc || returnAlnRes == false ||
+                                     par.expansionMode == Parameters::EXPAND_RESCORE_BACKTRACE;
+        if (needsTargetData) {
+            std::sort(alignmentIds.begin(), alignmentIds.end());
+            alignmentIds.erase(std::unique(alignmentIds.begin(), alignmentIds.end()), alignmentIds.end());
+            std::vector<size_t> sequenceIds;
+            for (size_t id : alignmentIds) {
+                Matcher::readAlignmentResults(prefetchResults, resultBcReader->getData(id, 0), false);
+                for (const Matcher::result_t &result : prefetchResults) {
+                    size_t sequenceId = cReader->getId(result.dbKey);
+                    if (sequenceId != DB_ENTRY_NOT_FOUND) {
+                        sequenceIds.push_back(sequenceId);
+                    }
+                }
+                prefetchResults.clear();
+            }
+            cReader->prefetchData(sequenceIds);
+        }
+    }
     EvalueComputation *evaluer = NULL;
     ProbabilityMatrix *probMatrix = NULL;
     if (returnAlnRes == false) {

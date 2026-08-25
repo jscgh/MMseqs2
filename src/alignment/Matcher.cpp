@@ -3,6 +3,7 @@
 #include "Matcher.h"
 #include "Util.h"
 #include "Parameters.h"
+#include "DBReader.h"
 #include "StripedSmithWaterman.h"
 #include <fast_float/fast_float.h>
 
@@ -153,6 +154,29 @@ void Matcher::readAlignmentResults(std::vector<result_t> &result, char *data, bo
         result.emplace_back(parseAlignmentRecord(data, readCompressed));
         data = Util::skipLine(data);
     }
+}
+
+void Matcher::prefetchTargetData(DBReader<DBKeyType> &resultReader,
+                                 DBReader<DBKeyType> &targetReader,
+                                 size_t start, size_t count) {
+    const size_t resultSize = resultReader.getSize();
+    if (start >= resultSize) {
+        return;
+    }
+    const size_t end = start + std::min(count, resultSize - start);
+    std::vector<size_t> targetIds;
+    for (size_t i = start; i < end; ++i) {
+        char *data = resultReader.getData(i, 0);
+        while (*data != '\0') {
+            const DBKeyType targetKey = Util::fast_atoi<DBKeyType>(data);
+            data = Util::skipLine(data);
+            size_t id = targetReader.getId(targetKey);
+            if (id != DB_ENTRY_NOT_FOUND) {
+                targetIds.push_back(id);
+            }
+        }
+    }
+    targetReader.prefetchData(targetIds);
 }
 
 int Matcher::computeAlnLength(int qStart, int qEnd, int dbStart, int dbEnd) {

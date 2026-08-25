@@ -63,6 +63,53 @@ void DBReader<T>::readMmapedDataInMemory(){
 }
 
 template <typename T>
+void DBReader<T>::prefetchData(const std::vector<size_t> &ids) {
+    if (ids.empty() || !(dataMode & USE_DATA) || (dataMode & USE_FREAD)) {
+        return;
+    }
+
+    std::vector<size_t> sortedIds(ids);
+    std::sort(sortedIds.begin(), sortedIds.end(), [this](size_t lhs, size_t rhs) {
+        return getOffset(lhs) < getOffset(rhs);
+    });
+    sortedIds.erase(std::unique(sortedIds.begin(), sortedIds.end()), sortedIds.end());
+
+    const size_t pageSize = Util::getPageSize();
+    size_t currentFile = SIZE_MAX;
+    size_t rangeBegin = 0;
+    size_t rangeEnd = 0;
+    size_t file = 0;
+
+    for (size_t id : sortedIds) {
+        const size_t offset = getOffset(id);
+        while (file + 1 < dataFileCnt && offset >= dataSizeOffset[file + 1]) {
+            ++file;
+        }
+        const size_t fileOffset = offset - dataSizeOffset[file];
+        const size_t begin = (fileOffset / pageSize) * pageSize;
+        const size_t fileSize = dataSizeOffset[file + 1] - dataSizeOffset[file];
+        const size_t end = std::min(
+            ((fileOffset + getEntryLen(id) + pageSize - 1) / pageSize) * pageSize,
+            fileSize
+        );
+
+        if (currentFile == file && begin <= rangeEnd) {
+            rangeEnd = std::max(rangeEnd, end);
+            continue;
+        }
+        if (currentFile != SIZE_MAX) {
+            magicBytes += Util::touchMemory(dataFiles[currentFile] + rangeBegin, rangeEnd - rangeBegin);
+        }
+        currentFile = file;
+        rangeBegin = begin;
+        rangeEnd = end;
+    }
+    if (currentFile != SIZE_MAX) {
+        magicBytes += Util::touchMemory(dataFiles[currentFile] + rangeBegin, rangeEnd - rangeBegin);
+    }
+}
+
+template <typename T>
 void DBReader<T>::mlock(){
     if (dataMode & USE_DATA) {
         if (didMlock == false) {

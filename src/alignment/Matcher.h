@@ -18,6 +18,8 @@
 #include "EvalueComputation.h"
 #include "BandedNucleotideAligner.h"
 
+template<typename T> class DBReader;
+
 class Matcher{
 
 public:
@@ -212,6 +214,10 @@ public:
     static result_t parseAlignmentRecord(const char *data, bool readCompressed=false);
 
     static void readAlignmentResults(std::vector<result_t> &result, char *data, bool readCompressed = false);
+
+    static void prefetchTargetData(DBReader<DBKeyType> &resultReader,
+                                   DBReader<DBKeyType> &targetReader,
+                                   size_t start = 0, size_t count = SIZE_MAX);
 
     static float estimateSeqIdByScorePerCol(uint16_t score, unsigned int qLen, unsigned int tLen);
 

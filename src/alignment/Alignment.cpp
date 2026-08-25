@@ -56,7 +56,8 @@ Alignment::Alignment(const std::string &querySeqDB, const std::string &targetSeq
     }
 
     uint16_t extended = DBReader<DBKeyType>::getExtendedDbtype(FileUtil::parseDbType(prefDB.c_str()));
-    bool touch = (par.preloadMode != Parameters::PRELOAD_MODE_MMAP);
+    bool touch = (par.preloadMode == Parameters::PRELOAD_MODE_FREAD ||
+                  par.preloadMode == Parameters::PRELOAD_MODE_MMAP_TOUCH);
     tDbrIdx = new IndexReader(targetSeqDB, par.threads,
                               extended & Parameters::DBTYPE_EXTENDED_INDEX_NEED_SRC ? IndexReader::SRC_SEQUENCES : IndexReader::SEQUENCES,
                               (touch) ? (IndexReader::PRELOAD_INDEX | IndexReader::PRELOAD_DATA) : 0);
@@ -120,7 +121,7 @@ Alignment::Alignment(const std::string &querySeqDB, const std::string &targetSeq
     //qdbr->readMmapedDataInMemory();
     // make sure to touch target after query, so if there is not enough memory for the query, at least the targets
     // might have had enough space left to be residung in the page cache
-    if (sameQTDB == false && tDbrIdx == NULL && par.preloadMode != Parameters::PRELOAD_MODE_MMAP) {
+    if (sameQTDB == false && tDbrIdx == NULL && touch) {
         tdbr->readMmapedDataInMemory();
     }
 
@@ -138,6 +139,9 @@ Alignment::Alignment(const std::string &querySeqDB, const std::string &targetSeq
 
     prefdbr = new DBReader<DBKeyType>(prefDB.c_str(), prefDBIndex.c_str(), threads, DBReader<DBKeyType>::USE_DATA|DBReader<DBKeyType>::USE_INDEX);
     prefdbr->open(DBReader<DBKeyType>::LINEAR_ACCCESS);
+    if (par.preloadMode == Parameters::PRELOAD_MODE_AUTO) {
+        Matcher::prefetchTargetData(*prefdbr, *tdbr);
+    }
     reversePrefilterResult = Parameters::isEqualDbtype(prefdbr->getDbtype(), Parameters::DBTYPE_PREFILTER_REV_RES);
 
     correlationScoreWeight = par.correlationScoreWeight;
