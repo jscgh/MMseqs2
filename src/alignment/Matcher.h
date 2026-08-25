@@ -23,6 +23,7 @@ template<typename T> class DBReader;
 class Matcher{
 
 public:
+    // Bound each selected-record prefetch buffer to approximately 8 MiB of IDs.
     static constexpr size_t PREFETCH_BATCH_SIZE = 1U << 20;
 
     static const unsigned int SCORE_ONLY = 0;

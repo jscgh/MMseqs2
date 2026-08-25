@@ -11,6 +11,7 @@ set(TESTS
         TestCounting.cpp
         TestDBReader.cpp
         TestDBReaderPrefetch.cpp
+        TestExpandalnPrefetch.cpp
         TestDBReaderIndexSerialization.cpp
         TestDiagonalScoring.cpp
         TestDiagonalScoringPerformance.cpp

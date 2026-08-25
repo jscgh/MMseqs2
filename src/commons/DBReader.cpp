@@ -75,7 +75,9 @@ void DBReader<T>::prefetchData(std::vector<size_t> &ids) {
     }
 
     std::sort(ids.begin(), ids.end(), [this](size_t lhs, size_t rhs) {
-        return getOffset(lhs) < getOffset(rhs);
+        const size_t lhsOffset = getOffset(lhs);
+        const size_t rhsOffset = getOffset(rhs);
+        return lhsOffset != rhsOffset ? lhsOffset < rhsOffset : lhs < rhs;
     });
     ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
 
