@@ -23,6 +23,8 @@ template<typename T> class DBReader;
 class Matcher{
 
 public:
+    static constexpr size_t PREFETCH_BATCH_SIZE = 1U << 20;
+
     static const unsigned int SCORE_ONLY = 0;
     static const unsigned int SCORE_COV = 1;
     static const unsigned int SCORE_COV_SEQID = 2;
@@ -217,7 +219,8 @@ public:
 
     static void prefetchTargetData(DBReader<DBKeyType> &resultReader,
                                    DBReader<DBKeyType> &targetReader,
-                                   size_t start = 0, size_t count = SIZE_MAX);
+                                   size_t start = 0, size_t count = SIZE_MAX,
+                                   size_t batchSize = PREFETCH_BATCH_SIZE);
 
     static float estimateSeqIdByScorePerCol(uint16_t score, unsigned int qLen, unsigned int tLen);
 

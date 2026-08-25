@@ -157,8 +157,36 @@ int expandaln(int argc, const char **argv, const Command& command, bool returnAl
 
     const bool filterBc = par.expandFilterClusters;
     if (par.preloadMode == Parameters::PRELOAD_MODE_AUTO) {
+        const bool needsTargetData = filterBc || returnAlnRes == false ||
+                                     par.expansionMode == Parameters::EXPAND_RESCORE_BACKTRACE;
         std::vector<size_t> alignmentIds;
+        alignmentIds.reserve(Matcher::PREFETCH_BATCH_SIZE);
+        std::vector<size_t> sequenceIds;
+        sequenceIds.reserve(Matcher::PREFETCH_BATCH_SIZE);
         std::vector<Matcher::result_t> prefetchResults;
+        const auto flushSequences = [&]() {
+            cReader->prefetchData(sequenceIds);
+            sequenceIds.clear();
+        };
+        const auto flushAlignments = [&]() {
+            resultBcReader->prefetchData(alignmentIds);
+            if (needsTargetData) {
+                for (size_t id : alignmentIds) {
+                    Matcher::readAlignmentResults(prefetchResults, resultBcReader->getData(id, 0), false);
+                    for (const Matcher::result_t &result : prefetchResults) {
+                        size_t sequenceId = cReader->getId(result.dbKey);
+                        if (sequenceId != DB_ENTRY_NOT_FOUND) {
+                            sequenceIds.push_back(sequenceId);
+                            if (sequenceIds.size() >= Matcher::PREFETCH_BATCH_SIZE) {
+                                flushSequences();
+                            }
+                        }
+                    }
+                    prefetchResults.clear();
+                }
+            }
+            alignmentIds.clear();
+        };
         for (size_t i = 0; i < resultAbReader->getSize(); ++i) {
             char *data = resultAbReader->getData(i, 0);
             while (*data != '\0') {
@@ -170,29 +198,14 @@ int expandaln(int argc, const char **argv, const Command& command, bool returnAl
                 size_t id = resultBcReader->getId(resultAb.dbKey);
                 if (id != DB_ENTRY_NOT_FOUND) {
                     alignmentIds.push_back(id);
-                }
-            }
-        }
-        resultBcReader->prefetchData(alignmentIds);
-
-        const bool needsTargetData = filterBc || returnAlnRes == false ||
-                                     par.expansionMode == Parameters::EXPAND_RESCORE_BACKTRACE;
-        if (needsTargetData) {
-            std::sort(alignmentIds.begin(), alignmentIds.end());
-            alignmentIds.erase(std::unique(alignmentIds.begin(), alignmentIds.end()), alignmentIds.end());
-            std::vector<size_t> sequenceIds;
-            for (size_t id : alignmentIds) {
-                Matcher::readAlignmentResults(prefetchResults, resultBcReader->getData(id, 0), false);
-                for (const Matcher::result_t &result : prefetchResults) {
-                    size_t sequenceId = cReader->getId(result.dbKey);
-                    if (sequenceId != DB_ENTRY_NOT_FOUND) {
-                        sequenceIds.push_back(sequenceId);
+                    if (alignmentIds.size() >= Matcher::PREFETCH_BATCH_SIZE) {
+                        flushAlignments();
                     }
                 }
-                prefetchResults.clear();
             }
-            cReader->prefetchData(sequenceIds);
         }
+        flushAlignments();
+        flushSequences();
     }
     EvalueComputation *evaluer = NULL;
     ProbabilityMatrix *probMatrix = NULL;

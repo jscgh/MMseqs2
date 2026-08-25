@@ -158,13 +158,19 @@ void Matcher::readAlignmentResults(std::vector<result_t> &result, char *data, bo
 
 void Matcher::prefetchTargetData(DBReader<DBKeyType> &resultReader,
                                  DBReader<DBKeyType> &targetReader,
-                                 size_t start, size_t count) {
+                                 size_t start, size_t count, size_t batchSize) {
     const size_t resultSize = resultReader.getSize();
     if (start >= resultSize) {
         return;
     }
     const size_t end = start + std::min(count, resultSize - start);
+    batchSize = std::max(batchSize, static_cast<size_t>(1));
     std::vector<size_t> targetIds;
+    targetIds.reserve(std::min(batchSize, end - start));
+    const auto flush = [&targetReader, &targetIds]() {
+        targetReader.prefetchData(targetIds);
+        targetIds.clear();
+    };
     for (size_t i = start; i < end; ++i) {
         char *data = resultReader.getData(i, 0);
         while (*data != '\0') {
@@ -173,10 +179,13 @@ void Matcher::prefetchTargetData(DBReader<DBKeyType> &resultReader,
             size_t id = targetReader.getId(targetKey);
             if (id != DB_ENTRY_NOT_FOUND) {
                 targetIds.push_back(id);
+                if (targetIds.size() >= batchSize) {
+                    flush();
+                }
             }
         }
     }
-    targetReader.prefetchData(targetIds);
+    flush();
 }
 
 int Matcher::computeAlnLength(int qStart, int qEnd, int dbStart, int dbEnd) {

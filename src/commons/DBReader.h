@@ -368,7 +368,8 @@ public:
 
     void readMmapedDataInMemory();
 
-    void prefetchData(const std::vector<size_t> &ids);
+    // Sorts and deduplicates IDs in place before touching their mapped pages.
+    void prefetchData(std::vector<size_t> &ids);
 
     void mlock();
 
