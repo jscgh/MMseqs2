@@ -392,30 +392,36 @@ int Util::madviseLogged(void* addr, size_t len, int advice, const char* context)
 }
 
 char Util::touchMemory(const char *memory, size_t size) {
-    Util::madviseLogged((void*)memory, size, POSIX_MADV_WILLNEED, "touchMemory");
+    if (size == 0) {
+        return 0;
+    }
+    const size_t pageSize = getPageSize();
+    const uintptr_t address = reinterpret_cast<uintptr_t>(memory);
+    const uintptr_t alignedAddress = address - (address % pageSize);
+    Util::madviseLogged(reinterpret_cast<void *>(alignedAddress), size + (address - alignedAddress),
+                        POSIX_MADV_WILLNEED, "touchMemory");
     if(size > Util::getTotalSystemMemory()){
         Debug(Debug::WARNING) << "Can not touch " << size << " into main memory\n";
         return 0;
     }
-    size_t pageSize = getPageSize();
+
 //    Debug::Progress progress(size/pageSize);
     size_t fourTimesPageSize = 4*pageSize;
-    char buffer1 = 0;
-    char buffer2 = 0;
-    char buffer3 = 0;
-    char buffer4 = 0;
+    unsigned char buffer1 = 0;
+    unsigned char buffer2 = 0;
+    unsigned char buffer3 = 0;
+    unsigned char buffer4 = 0;
 
-    // touch first page
-    if(size > 0){
-       buffer1 += *(memory);
-    }
-
-    // load always four pages to reduce data dependency
-    for (size_t pos = 0; (pos + fourTimesPageSize) < size; pos += 4*pageSize) {
+    // Load four pages at a time to reduce data dependency.
+    size_t pos = 0;
+    for (; (size - pos) >= fourTimesPageSize; pos += fourTimesPageSize) {
         buffer1 += *(memory + pos);
-        buffer2 += *(memory + pos + 2*pageSize);
-        buffer3 += *(memory + pos + 3*pageSize);
-        buffer4 += *(memory + pos + 4*pageSize);
+        buffer2 += *(memory + pos + pageSize);
+        buffer3 += *(memory + pos + 2*pageSize);
+        buffer4 += *(memory + pos + 3*pageSize);
+    }
+    for (; pos < size; pos += pageSize) {
+        buffer1 += *(memory + pos);
     }
 
     return buffer1+buffer2+buffer3+buffer4;
