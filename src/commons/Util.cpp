@@ -119,21 +119,30 @@ size_t availableMemory(size_t limit, size_t usage, size_t inactiveFile) {
 namespace {
 
 #ifdef __linux__
-bool readCgroupValue(const std::string &path, size_t &value) {
+enum CgroupValueStatus {
+    CGROUP_VALUE_INVALID,
+    CGROUP_VALUE_UNLIMITED,
+    CGROUP_VALUE_VALID
+};
+
+CgroupValueStatus readCgroupValue(const std::string &path, size_t &value) {
     std::ifstream input(path.c_str());
     std::string text;
-    if (!(input >> text) || text == "max") {
-        return false;
+    if (!(input >> text)) {
+        return CGROUP_VALUE_INVALID;
+    }
+    if (text == "max") {
+        return CGROUP_VALUE_UNLIMITED;
     }
     errno = 0;
     char *end = NULL;
     const unsigned long long parsed = strtoull(text.c_str(), &end, 10);
     if (errno != 0 || end == text.c_str() || *end != '\0' ||
         parsed > std::numeric_limits<size_t>::max()) {
-        return false;
+        return CGROUP_VALUE_INVALID;
     }
     value = static_cast<size_t>(parsed);
-    return true;
+    return CGROUP_VALUE_VALID;
 }
 
 struct CgroupMemoryFiles {
@@ -256,29 +265,41 @@ bool getCgroupMemory(size_t &limit, size_t &available) {
         }
         return verified.empty() ? fallback : verified;
     }();
+    bool foundReadableHierarchy = false;
+    bool foundInvalidLimit = false;
     for (size_t i : hierarchyOrder) {
         bool found = false;
         limit = std::numeric_limits<size_t>::max();
         available = std::numeric_limits<size_t>::max();
         for (const CgroupMemoryFiles::Path &path : files.hierarchies[i].paths) {
             size_t currentLimit = 0;
-            if (readCgroupValue(path.limit, currentLimit)) {
+            const CgroupValueStatus limitStatus = readCgroupValue(path.limit, currentLimit);
+            if (limitStatus == CGROUP_VALUE_UNLIMITED) {
+                foundReadableHierarchy = true;
+            } else if (limitStatus == CGROUP_VALUE_VALID) {
                 size_t currentUsage = 0;
                 limit = std::min(limit, currentLimit);
-                if (readCgroupValue(path.usage, currentUsage)) {
+                if (readCgroupValue(path.usage, currentUsage) == CGROUP_VALUE_VALID) {
                     available = std::min(available, CgroupMemory::availableMemory(
                         currentLimit, currentUsage, readCgroupStat(path.stat, path.inactiveFileKey)));
                 } else {
                     available = 0;
                 }
                 found = true;
+            } else {
+                foundInvalidLimit = true;
             }
         }
         if (found) {
             return true;
         }
     }
-    return false;
+    if (foundReadableHierarchy && foundInvalidLimit == false) {
+        return false;
+    }
+    limit = 0;
+    available = 0;
+    return true;
 }
 #endif
 
