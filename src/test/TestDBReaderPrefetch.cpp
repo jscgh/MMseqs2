@@ -58,6 +58,9 @@ int main(int, const char**) {
     resultReader.open(DBReader<DBKeyType>::LINEAR_ACCCESS);
     Matcher::prefetchTargetData(resultReader, reader, 0, SIZE_MAX, 2);
     Matcher::prefetchTargetData(resultReader, reader, 1, 1, 0);
+    if (Matcher::prefetchTargetData(resultReader, reader, 0, SIZE_MAX, 2, 1) > 1) {
+        return EXIT_FAILURE;
+    }
     resultReader.close();
     DBReader<DBKeyType>::removeDb("prefetchResults");
 

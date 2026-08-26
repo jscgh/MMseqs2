@@ -220,10 +220,11 @@ public:
 
     static void readAlignmentResults(std::vector<result_t> &result, char *data, bool readCompressed = false);
 
-    static void prefetchTargetData(DBReader<DBKeyType> &resultReader,
-                                   DBReader<DBKeyType> &targetReader,
-                                   size_t start = 0, size_t count = SIZE_MAX,
-                                   size_t batchSize = PREFETCH_BATCH_SIZE);
+    static size_t prefetchTargetData(DBReader<DBKeyType> &resultReader,
+                                     DBReader<DBKeyType> &targetReader,
+                                     size_t start = 0, size_t count = SIZE_MAX,
+                                     size_t batchSize = PREFETCH_BATCH_SIZE,
+                                     size_t maxBytes = PREFETCH_MAX_BYTES);
 
     static float estimateSeqIdByScorePerCol(uint16_t score, unsigned int qLen, unsigned int tLen);
 

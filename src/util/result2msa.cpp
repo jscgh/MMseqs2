@@ -112,8 +112,13 @@ int result2msa(int argc, const char **argv, const Command &command) {
 #endif
 
     if (par.preloadMode == Parameters::PRELOAD_MODE_AUTO) {
-        Matcher::prefetchTargetData(resultReader, *tDbr, dbFrom, dbSize);
-        Matcher::prefetchTargetData(resultReader, *targetHeaderReader, dbFrom, dbSize);
+        size_t prefetchBudget = Matcher::PREFETCH_MAX_BYTES;
+        prefetchBudget -= Matcher::prefetchTargetData(resultReader, *tDbr, dbFrom, dbSize,
+                                                       Matcher::PREFETCH_BATCH_SIZE, prefetchBudget);
+        if (prefetchBudget != 0) {
+            Matcher::prefetchTargetData(resultReader, *targetHeaderReader, dbFrom, dbSize,
+                                        Matcher::PREFETCH_BATCH_SIZE, prefetchBudget);
+        }
     }
 
     size_t localThreads = 1;

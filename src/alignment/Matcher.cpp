@@ -156,20 +156,23 @@ void Matcher::readAlignmentResults(std::vector<result_t> &result, char *data, bo
     }
 }
 
-void Matcher::prefetchTargetData(DBReader<DBKeyType> &resultReader,
-                                 DBReader<DBKeyType> &targetReader,
-                                 size_t start, size_t count, size_t batchSize) {
+size_t Matcher::prefetchTargetData(DBReader<DBKeyType> &resultReader,
+                                   DBReader<DBKeyType> &targetReader,
+                                   size_t start, size_t count, size_t batchSize,
+                                   size_t maxBytes) {
     const size_t resultSize = resultReader.getSize();
     if (start >= resultSize) {
-        return;
+        return 0;
     }
     const size_t end = start + std::min(count, resultSize - start);
     batchSize = std::max(batchSize, static_cast<size_t>(1));
     std::vector<size_t> targetIds;
     targetIds.reserve(std::min(batchSize, end - start));
-    const auto flush = [&targetReader, &targetIds]() {
-        targetReader.prefetchData(targetIds);
+    size_t prefetchedBytes = 0;
+    const auto flush = [&]() {
+        prefetchedBytes += targetReader.prefetchData(targetIds, maxBytes - prefetchedBytes);
         targetIds.clear();
+        return prefetchedBytes < maxBytes;
     };
     for (size_t i = start; i < end; ++i) {
         char *data = resultReader.getData(i, 0);
@@ -180,12 +183,15 @@ void Matcher::prefetchTargetData(DBReader<DBKeyType> &resultReader,
             if (id != DB_ENTRY_NOT_FOUND) {
                 targetIds.push_back(id);
                 if (targetIds.size() >= batchSize) {
-                    flush();
+                    if (flush() == false) {
+                        return prefetchedBytes;
+                    }
                 }
             }
         }
     }
     flush();
+    return prefetchedBytes;
 }
 
 int Matcher::computeAlnLength(int qStart, int qEnd, int dbStart, int dbEnd) {
