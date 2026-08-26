@@ -19,6 +19,7 @@ set(TESTS
         TestKmerNucl.cpp
         TestKmerScore.cpp
         TestKwayMerge.cpp
+        TestMappingReader.cpp
         TestMultipleAlignment.cpp
         TestProfileAlignment.cpp
         TestPSSM.cpp
