@@ -1,6 +1,7 @@
 #include "Util.h"
 #include "Debug.h"
 #include "FileUtil.h"
+#include "CgroupMemory.h"
 #include "BaseMatrix.h"
 #include "SubstitutionMatrix.h"
 #include "Sequence.h"
@@ -21,6 +22,7 @@
 #include <cerrno>
 #include <cstring>
 #include <limits>
+#include <sstream>
 #include <sys/mman.h>
 #include <fstream>      // std::ifstream
 
@@ -29,6 +31,87 @@
 
 #ifdef OPENMP
 #include <omp.h>
+#endif
+
+#ifdef __linux__
+namespace CgroupMemory {
+
+namespace {
+
+bool hasListEntry(const std::string &list, const std::string &entry) {
+    return ("," + list + ",").find("," + entry + ",") != std::string::npos;
+}
+
+std::string decodePath(const std::string &encoded) {
+    std::string decoded;
+    decoded.reserve(encoded.size());
+    for (size_t i = 0; i < encoded.size(); ++i) {
+        if (encoded[i] == '\\' && i + 3 < encoded.size() &&
+            encoded[i + 1] >= '0' && encoded[i + 1] <= '7' &&
+            encoded[i + 2] >= '0' && encoded[i + 2] <= '7' &&
+            encoded[i + 3] >= '0' && encoded[i + 3] <= '7') {
+            decoded.push_back(static_cast<char>((encoded[i + 1] - '0') * 64 +
+                                                (encoded[i + 2] - '0') * 8 +
+                                                encoded[i + 3] - '0'));
+            i += 3;
+        } else {
+            decoded.push_back(encoded[i]);
+        }
+    }
+    return decoded;
+}
+
+}
+
+std::vector<Mount> parseMounts(std::istream &input) {
+    std::vector<Mount> mounts;
+    std::string line;
+    while (std::getline(input, line)) {
+        const size_t separator = line.find(" - ");
+        if (separator == std::string::npos) {
+            continue;
+        }
+        std::istringstream before(line.substr(0, separator));
+        std::string id, parent, device, root, path;
+        if (!(before >> id >> parent >> device >> root >> path)) {
+            continue;
+        }
+        std::istringstream after(line.substr(separator + 3));
+        std::string fileSystem, source, options;
+        if (!(after >> fileSystem >> source >> options)) {
+            continue;
+        }
+        if (fileSystem == "cgroup2" ||
+            (fileSystem == "cgroup" && hasListEntry(options, "memory"))) {
+            mounts.push_back(Mount{fileSystem == "cgroup2", decodePath(root), decodePath(path)});
+        }
+    }
+    return mounts;
+}
+
+std::string resolvePath(const Mount &mount, const std::string &hierarchyPath) {
+    std::string relative;
+    if (mount.root == "/") {
+        relative = hierarchyPath;
+    } else if (hierarchyPath == mount.root) {
+        relative = "/";
+    } else if (hierarchyPath.compare(0, mount.root.size(), mount.root) == 0 &&
+               hierarchyPath.size() > mount.root.size() && hierarchyPath[mount.root.size()] == '/') {
+        relative = hierarchyPath.substr(mount.root.size());
+    } else if (hierarchyPath == "/") {
+        relative = "/";
+    } else {
+        return std::string();
+    }
+    return relative == "/" ? mount.path : mount.path + relative;
+}
+
+size_t availableMemory(size_t limit, size_t usage, size_t inactiveFile) {
+    const size_t workingSet = usage - std::min(usage, inactiveFile);
+    return workingSet < limit ? limit - workingSet : 0;
+}
+
+}
 #endif
 
 namespace {
@@ -52,11 +135,19 @@ bool readCgroupValue(const std::string &path, size_t &value) {
 }
 
 struct CgroupMemoryFiles {
-    std::vector<std::pair<std::string, std::string>> paths;
+    struct Path {
+        std::string limit;
+        std::string usage;
+        std::string stat;
+        std::string inactiveFileKey;
+    };
+    std::vector<Path> paths;
 };
 
 CgroupMemoryFiles findCgroupMemoryFiles() {
     CgroupMemoryFiles files;
+    std::ifstream mountInfo("/proc/self/mountinfo");
+    const std::vector<CgroupMemory::Mount> mounts = CgroupMemory::parseMounts(mountInfo);
     std::ifstream input("/proc/self/cgroup");
     std::string line;
     while (std::getline(input, line)) {
@@ -68,20 +159,33 @@ CgroupMemoryFiles findCgroupMemoryFiles() {
         const std::string hierarchy = line.substr(0, first);
         const std::string controllers = line.substr(first + 1, second - first - 1);
         const bool isUnified = hierarchy == "0" && controllers.empty();
-        const bool isMemory = controllers == "memory" ||
-                              controllers.find("memory,") == 0 ||
-                              controllers.find(",memory") != std::string::npos;
+        const bool isMemory = ("," + controllers + ",").find(",memory,") != std::string::npos;
         if (isUnified || isMemory) {
-            const std::string root = isUnified ? "/sys/fs/cgroup" : "/sys/fs/cgroup/memory";
-            std::string current = root;
-            const std::string relativePath = line.substr(second + 1);
-            if (relativePath.empty() == false && relativePath != "/") {
-                current += relativePath[0] == '/' ? relativePath : "/" + relativePath;
+            const CgroupMemory::Mount *mount = NULL;
+            for (const CgroupMemory::Mount &candidate : mounts) {
+                if (candidate.unified == isUnified) {
+                    mount = &candidate;
+                    break;
+                }
+            }
+            if (mount == NULL) {
+                continue;
+            }
+            const std::string root = mount->path;
+            std::string current = CgroupMemory::resolvePath(*mount, line.substr(second + 1));
+            if (current.empty()) {
+                continue;
             }
             const char *limitName = isUnified ? "/memory.max" : "/memory.limit_in_bytes";
             const char *usageName = isUnified ? "/memory.current" : "/memory.usage_in_bytes";
+            const char *inactiveFileKey = isUnified ? "inactive_file" : "total_inactive_file";
             while (current.size() >= root.size()) {
-                files.paths.emplace_back(current + limitName, current + usageName);
+                files.paths.push_back(CgroupMemoryFiles::Path{
+                    current + limitName,
+                    current + usageName,
+                    current + "/memory.stat",
+                    inactiveFileKey
+                });
                 if (current == root) {
                     break;
                 }
@@ -94,6 +198,18 @@ CgroupMemoryFiles findCgroupMemoryFiles() {
     return files;
 }
 
+size_t readCgroupStat(const std::string &path, const std::string &key) {
+    std::ifstream input(path.c_str());
+    std::string name;
+    size_t value = 0;
+    while (input >> name >> value) {
+        if (name == key) {
+            return value;
+        }
+    }
+    return 0;
+}
+
 bool getCgroupMemory(size_t &limit, size_t &available) {
     static const CgroupMemoryFiles files = findCgroupMemoryFiles();
     if (files.paths.empty()) {
@@ -102,14 +218,14 @@ bool getCgroupMemory(size_t &limit, size_t &available) {
     bool found = false;
     limit = std::numeric_limits<size_t>::max();
     available = std::numeric_limits<size_t>::max();
-    for (const std::pair<std::string, std::string> &path : files.paths) {
+    for (const CgroupMemoryFiles::Path &path : files.paths) {
         size_t currentLimit = 0;
-        if (readCgroupValue(path.first, currentLimit)) {
+        if (readCgroupValue(path.limit, currentLimit)) {
             size_t currentUsage = 0;
             limit = std::min(limit, currentLimit);
-            if (readCgroupValue(path.second, currentUsage)) {
-                available = std::min(available,
-                                     currentUsage < currentLimit ? currentLimit - currentUsage : size_t(0));
+            if (readCgroupValue(path.usage, currentUsage)) {
+                available = std::min(available, CgroupMemory::availableMemory(
+                    currentLimit, currentUsage, readCgroupStat(path.stat, path.inactiveFileKey)));
             }
             found = true;
         }
@@ -426,7 +542,9 @@ size_t Util::getTotalSystemMemory() {
     static const size_t sysMemory = []() {
         const size_t pages = getTotalMemoryPages();
         const size_t pageSize = getPageSize();
-        size_t detected = pages * pageSize;
+        size_t detected = pages > std::numeric_limits<size_t>::max() / pageSize
+                          ? std::numeric_limits<size_t>::max()
+                          : pages * pageSize;
 #ifdef __linux__
         size_t cgroupLimit = 0;
         size_t cgroupAvailable = 0;
