@@ -2,6 +2,7 @@
 #define MAPPING_READER_H
 
 #include "Util.h"
+#include "Debug.h"
 #include "MemoryMapped.h"
 #include "NcbiTaxonomy.h"
 #include <algorithm>
@@ -27,9 +28,27 @@ public:
         }
         char *data = (char *) file->getData();
         size_t dataSize = file->size();
-        if (file->size() > magicLen && memcmp(data, magic, magicLen) == 0) {
+        if (isBinaryMapping(data, dataSize, magic, sizeof(Pair))) {
             entries = reinterpret_cast<Pair*>(data + magicLen);
             count = (dataSize - magicLen) / sizeof(Pair);
+            return;
+        }
+        if (isBinaryMapping(data, dataSize, legacyMagic, sizeof(LegacyPair))) {
+            count = (dataSize - magicLen) / sizeof(LegacyPair);
+            if (sizeof(Pair) == sizeof(LegacyPair)) {
+                entries = reinterpret_cast<Pair*>(data + magicLen);
+                return;
+            }
+
+            const LegacyPair *legacyEntries = reinterpret_cast<const LegacyPair *>(data + magicLen);
+            entries = new Pair[count];
+            for (size_t i = 0; i < count; ++i) {
+                entries[i].dbkey = legacyEntries[i].dbkey;
+                entries[i].taxon = legacyEntries[i].taxon;
+            }
+            file->close();
+            delete file;
+            file = NULL;
             return;
         }
         std::vector<std::pair<DBKeyType, TaxID>> mapping;
@@ -96,11 +115,21 @@ private:
         DBKeyType dbkey;
         TaxID taxon;
     };
+    struct __attribute__((__packed__)) LegacyPair{
+        uint32_t dbkey;
+        TaxID taxon;
+    };
     Pair* entries;
     size_t count;
     //                    T  A   X   M  Version
     const char magic[5] = {19, 0, 23, 12, sizeof(DBKeyType) == sizeof(uint64_t) ? 2 : 1};
+    const char legacyMagic[5] = {19, 0, 23, 12, 0};
     const size_t magicLen = 5;
+    bool isBinaryMapping(const char *data, size_t dataSize, const char *expectedMagic, size_t entrySize) const {
+        return dataSize > magicLen &&
+               memcmp(data, expectedMagic, magicLen) == 0 &&
+               (dataSize - magicLen) % entrySize == 0;
+    }
     static bool compareTaxa(const Pair &lhs, const Pair &rhs) {
         return (lhs.dbkey <= rhs.dbkey);
     }
