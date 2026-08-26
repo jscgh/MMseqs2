@@ -143,7 +143,11 @@ struct CgroupMemoryFiles {
         std::string stat;
         std::string inactiveFileKey;
     };
-    std::vector<std::vector<Path> > hierarchies;
+    struct Hierarchy {
+        std::string processes;
+        std::vector<Path> paths;
+    };
+    std::vector<Hierarchy> hierarchies;
 };
 
 void addCgroupHierarchy(CgroupMemoryFiles &files, const CgroupMemory::Mount &mount,
@@ -167,7 +171,7 @@ void addCgroupHierarchy(CgroupMemoryFiles &files, const CgroupMemory::Mount &mou
         const size_t slash = current.find_last_of('/');
         current.resize(std::max(slash, root.size()));
     }
-    files.hierarchies.push_back(paths);
+    files.hierarchies.push_back(CgroupMemoryFiles::Hierarchy{currentPath + "/cgroup.procs", paths});
 }
 
 CgroupMemoryFiles findCgroupMemoryFiles() {
@@ -225,16 +229,38 @@ size_t readCgroupStat(const std::string &path, const std::string &key) {
     return 0;
 }
 
+bool containsProcess(const std::string &path, pid_t process) {
+    std::ifstream input(path.c_str());
+    pid_t member = 0;
+    while (input >> member) {
+        if (member == process) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool getCgroupMemory(size_t &limit, size_t &available) {
     static const CgroupMemoryFiles files = findCgroupMemoryFiles();
     if (files.hierarchies.empty()) {
         return false;
     }
-    for (const std::vector<CgroupMemoryFiles::Path> &paths : files.hierarchies) {
+    std::vector<bool> verified(files.hierarchies.size(), false);
+    bool hasVerifiedHierarchy = false;
+    for (size_t i = 0; i < files.hierarchies.size(); ++i) {
+        if (containsProcess(files.hierarchies[i].processes, getpid())) {
+            verified[i] = true;
+            hasVerifiedHierarchy = true;
+        }
+    }
+    for (size_t i = 0; i < files.hierarchies.size(); ++i) {
+        if (hasVerifiedHierarchy && verified[i] == false) {
+            continue;
+        }
         bool found = false;
         limit = std::numeric_limits<size_t>::max();
         available = std::numeric_limits<size_t>::max();
-        for (const CgroupMemoryFiles::Path &path : paths) {
+        for (const CgroupMemoryFiles::Path &path : files.hierarchies[i].paths) {
             size_t currentLimit = 0;
             if (readCgroupValue(path.limit, currentLimit)) {
                 size_t currentUsage = 0;
