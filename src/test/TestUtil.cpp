@@ -47,6 +47,7 @@ int main (int, const char**) {
         CgroupMemory::resolvePath(mounts[0], "/jobs/42") != "/sys/fs/cgroup/jobs/42" ||
         CgroupMemory::resolvePath(mounts[1], "/pbs/jobs/42") != "/sys/fs/cgroup/memory/jobs/42" ||
         CgroupMemory::resolvePath(mounts[1], "/") != "/sys/fs/cgroup/memory" ||
+        CgroupMemory::resolvePath(mounts[1], "/jobs/42") != "/sys/fs/cgroup/memory/jobs/42" ||
         mounts[2].path != "/sys/fs/cgroup/escaped path" ||
         CgroupMemory::availableMemory(100, 95, 80) != 85 ||
         CgroupMemory::availableMemory(100, 120, 10) != 0) {

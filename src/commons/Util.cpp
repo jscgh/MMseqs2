@@ -98,10 +98,9 @@ std::string resolvePath(const Mount &mount, const std::string &hierarchyPath) {
     } else if (hierarchyPath.compare(0, mount.root.size(), mount.root) == 0 &&
                hierarchyPath.size() > mount.root.size() && hierarchyPath[mount.root.size()] == '/') {
         relative = hierarchyPath.substr(mount.root.size());
-    } else if (hierarchyPath == "/") {
-        relative = "/";
     } else {
-        return std::string();
+        // /proc/self/cgroup paths are relative to the cgroup namespace root.
+        relative = hierarchyPath;
     }
     return relative == "/" ? mount.path : mount.path + relative;
 }
@@ -161,36 +160,28 @@ CgroupMemoryFiles findCgroupMemoryFiles() {
         const bool isUnified = hierarchy == "0" && controllers.empty();
         const bool isMemory = ("," + controllers + ",").find(",memory,") != std::string::npos;
         if (isUnified || isMemory) {
-            const CgroupMemory::Mount *mount = NULL;
             for (const CgroupMemory::Mount &candidate : mounts) {
-                if (candidate.unified == isUnified) {
-                    mount = &candidate;
-                    break;
+                if (candidate.unified != isUnified) {
+                    continue;
                 }
-            }
-            if (mount == NULL) {
-                continue;
-            }
-            const std::string root = mount->path;
-            std::string current = CgroupMemory::resolvePath(*mount, line.substr(second + 1));
-            if (current.empty()) {
-                continue;
-            }
-            const char *limitName = isUnified ? "/memory.max" : "/memory.limit_in_bytes";
-            const char *usageName = isUnified ? "/memory.current" : "/memory.usage_in_bytes";
-            const char *inactiveFileKey = isUnified ? "inactive_file" : "total_inactive_file";
-            while (current.size() >= root.size()) {
-                files.paths.push_back(CgroupMemoryFiles::Path{
-                    current + limitName,
-                    current + usageName,
-                    current + "/memory.stat",
-                    inactiveFileKey
-                });
-                if (current == root) {
-                    break;
+                const std::string root = candidate.path;
+                std::string current = CgroupMemory::resolvePath(candidate, line.substr(second + 1));
+                const char *limitName = isUnified ? "/memory.max" : "/memory.limit_in_bytes";
+                const char *usageName = isUnified ? "/memory.current" : "/memory.usage_in_bytes";
+                const char *inactiveFileKey = isUnified ? "inactive_file" : "total_inactive_file";
+                while (current.size() >= root.size()) {
+                    files.paths.push_back(CgroupMemoryFiles::Path{
+                        current + limitName,
+                        current + usageName,
+                        current + "/memory.stat",
+                        inactiveFileKey
+                    });
+                    if (current == root) {
+                        break;
+                    }
+                    const size_t slash = current.find_last_of('/');
+                    current.resize(std::max(slash, root.size()));
                 }
-                const size_t slash = current.find_last_of('/');
-                current.resize(std::max(slash, root.size()));
             }
             break;
         }

@@ -1,6 +1,7 @@
 #ifndef MMSEQS_CGROUPMEMORY_H
 #define MMSEQS_CGROUPMEMORY_H
 
+#include <cstddef>
 #include <istream>
 #include <string>
 #include <vector>
@@ -17,7 +18,7 @@ std::vector<Mount> parseMounts(std::istream &input);
 
 std::string resolvePath(const Mount &mount, const std::string &hierarchyPath);
 
-size_t availableMemory(size_t limit, size_t usage, size_t inactiveFile);
+std::size_t availableMemory(std::size_t limit, std::size_t usage, std::size_t inactiveFile);
 
 }
 
