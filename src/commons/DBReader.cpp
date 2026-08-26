@@ -54,6 +54,10 @@ template <typename T>
 void DBReader<T>::readMmapedDataInMemory(){
     if ((dataMode & USE_DATA) && (dataMode & USE_FREAD) == 0) {
         //Debug(Debug::INFO) << "Touch data file " << dataFileName << "\n";
+        if (Util::canTouchMemory(totalDataSize) == false) {
+            Debug(Debug::WARNING) << "Can not touch " << totalDataSize << " into main memory\n";
+            return;
+        }
         for(size_t fileIdx = 0; fileIdx < dataFileCnt; fileIdx++){
             size_t dataSize = dataSizeOffset[fileIdx+1]-dataSizeOffset[fileIdx];
             magicBytes += Util::touchMemory(dataFiles[fileIdx], dataSize);
@@ -96,6 +100,9 @@ size_t DBReader<T>::prefetchData(std::vector<size_t> &ids, size_t maxBytes) {
     const auto prefetchRange = [&](size_t fileIdx, size_t begin, size_t end) {
         const size_t remainingBytes = maxBytes - prefetchedBytes;
         const size_t rangeSize = std::min(end - begin, remainingBytes);
+        if (rangeSize == 0 || Util::canTouchMemory(rangeSize) == false) {
+            return false;
+        }
         magicBytes += Util::touchMemory(dataFiles[fileIdx] + begin, rangeSize);
         prefetchedBytes += rangeSize;
         return rangeSize == end - begin;

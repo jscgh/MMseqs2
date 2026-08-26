@@ -97,6 +97,7 @@ public:
     static size_t getTotalMemoryPages();
     static uint64_t getL2CacheSize();
 
+    static bool canTouchMemory(size_t size);
     static char touchMemory(const char* memory, size_t size);
 
     // Wrap posix_madvise with errno-aware logging. Returns posix_madvise's

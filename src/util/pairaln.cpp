@@ -212,7 +212,8 @@ int pairaln(int argc, const char **argv, const Command& command) {
     IndexReader *targetHeaderReaderIdx = NULL;
     if(par.pairfilter == Parameters::PAIRALN_FILTER_PROXIMITY) {
         uint16_t extended = DBReader<DBKeyType>::getExtendedDbtype(FileUtil::parseDbType(par.db3.c_str()));
-        bool touch = (par.preloadMode != Parameters::PRELOAD_MODE_MMAP);
+        bool touch = (par.preloadMode == Parameters::PRELOAD_MODE_FREAD ||
+                      par.preloadMode == Parameters::PRELOAD_MODE_MMAP_TOUCH);
         targetHeaderReaderIdx = new IndexReader(par.db2, par.threads,
                                                 extended & Parameters::DBTYPE_EXTENDED_INDEX_NEED_SRC
                                                 ? IndexReader::SRC_HEADERS : IndexReader::HEADERS,

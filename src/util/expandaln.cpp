@@ -92,7 +92,8 @@ int expandaln(int argc, const char **argv, const Command& command, bool returnAl
     DBReader<DBKeyType> aReader(par.db1.c_str(), par.db1Index.c_str(), par.threads, DBReader<DBKeyType>::USE_INDEX | DBReader<DBKeyType>::USE_DATA);
     aReader.open(DBReader<DBKeyType>::NOSORT);
     const int aSeqDbType = aReader.getDbtype();
-    if (par.preloadMode != Parameters::PRELOAD_MODE_MMAP) {
+    if (par.preloadMode == Parameters::PRELOAD_MODE_FREAD ||
+        par.preloadMode == Parameters::PRELOAD_MODE_MMAP_TOUCH) {
         aReader.readMmapedDataInMemory();
     }
 

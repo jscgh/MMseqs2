@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <limits>
 #include <sys/mman.h>
 #include <fstream>      // std::ifstream
 
@@ -29,6 +30,95 @@
 #ifdef OPENMP
 #include <omp.h>
 #endif
+
+namespace {
+
+#ifdef __linux__
+bool readCgroupValue(const std::string &path, size_t &value) {
+    std::ifstream input(path.c_str());
+    std::string text;
+    if (!(input >> text) || text == "max") {
+        return false;
+    }
+    errno = 0;
+    char *end = NULL;
+    const unsigned long long parsed = strtoull(text.c_str(), &end, 10);
+    if (errno != 0 || end == text.c_str() || *end != '\0' ||
+        parsed > std::numeric_limits<size_t>::max()) {
+        return false;
+    }
+    value = static_cast<size_t>(parsed);
+    return true;
+}
+
+struct CgroupMemoryFiles {
+    std::vector<std::pair<std::string, std::string>> paths;
+};
+
+CgroupMemoryFiles findCgroupMemoryFiles() {
+    CgroupMemoryFiles files;
+    std::ifstream input("/proc/self/cgroup");
+    std::string line;
+    while (std::getline(input, line)) {
+        const size_t first = line.find(':');
+        const size_t second = first == std::string::npos ? std::string::npos : line.find(':', first + 1);
+        if (second == std::string::npos) {
+            continue;
+        }
+        const std::string hierarchy = line.substr(0, first);
+        const std::string controllers = line.substr(first + 1, second - first - 1);
+        const bool isUnified = hierarchy == "0" && controllers.empty();
+        const bool isMemory = controllers == "memory" ||
+                              controllers.find("memory,") == 0 ||
+                              controllers.find(",memory") != std::string::npos;
+        if (isUnified || isMemory) {
+            const std::string root = isUnified ? "/sys/fs/cgroup" : "/sys/fs/cgroup/memory";
+            std::string current = root;
+            const std::string relativePath = line.substr(second + 1);
+            if (relativePath.empty() == false && relativePath != "/") {
+                current += relativePath[0] == '/' ? relativePath : "/" + relativePath;
+            }
+            const char *limitName = isUnified ? "/memory.max" : "/memory.limit_in_bytes";
+            const char *usageName = isUnified ? "/memory.current" : "/memory.usage_in_bytes";
+            while (current.size() >= root.size()) {
+                files.paths.emplace_back(current + limitName, current + usageName);
+                if (current == root) {
+                    break;
+                }
+                const size_t slash = current.find_last_of('/');
+                current.resize(std::max(slash, root.size()));
+            }
+            break;
+        }
+    }
+    return files;
+}
+
+bool getCgroupMemory(size_t &limit, size_t &available) {
+    static const CgroupMemoryFiles files = findCgroupMemoryFiles();
+    if (files.paths.empty()) {
+        return false;
+    }
+    bool found = false;
+    limit = std::numeric_limits<size_t>::max();
+    available = std::numeric_limits<size_t>::max();
+    for (const std::pair<std::string, std::string> &path : files.paths) {
+        size_t currentLimit = 0;
+        if (readCgroupValue(path.first, currentLimit)) {
+            size_t currentUsage = 0;
+            limit = std::min(limit, currentLimit);
+            if (readCgroupValue(path.second, currentUsage)) {
+                available = std::min(available,
+                                     currentUsage < currentLimit ? currentLimit - currentUsage : size_t(0));
+            }
+            found = true;
+        }
+    }
+    return found;
+}
+#endif
+
+}
 
 int Util::readMapping(std::string mappingFilename, std::vector<std::pair<unsigned int, unsigned int>> & mapping){
     MemoryMapped indexData(mappingFilename, MemoryMapped::WholeFile, MemoryMapped::SequentialScan);
@@ -333,10 +423,19 @@ size_t Util::getTotalMemoryPages() {
 
 // in bytes
 size_t Util::getTotalSystemMemory() {
-    // check for real physical memory
-    long pages = getTotalMemoryPages();
-    long page_size = getPageSize();
-    uint64_t sysMemory = pages * page_size;
+    static const size_t sysMemory = []() {
+        const size_t pages = getTotalMemoryPages();
+        const size_t pageSize = getPageSize();
+        size_t detected = pages * pageSize;
+#ifdef __linux__
+        size_t cgroupLimit = 0;
+        size_t cgroupAvailable = 0;
+        if (getCgroupMemory(cgroupLimit, cgroupAvailable)) {
+            detected = std::min(detected, cgroupLimit);
+        }
+#endif
+        return detected;
+    }();
     // check for ulimit
 //    struct rlimit limit;
 //    getrlimit(RLIMIT_MEMLOCK, &limit);
@@ -391,8 +490,26 @@ int Util::madviseLogged(void* addr, size_t len, int advice, const char* context)
 #endif
 }
 
+bool Util::canTouchMemory(size_t size) {
+    const size_t total = Util::getTotalSystemMemory();
+    const size_t reserve = total / 10;
+#ifdef __linux__
+    size_t cgroupLimit = 0;
+    size_t cgroupAvailable = 0;
+    if (getCgroupMemory(cgroupLimit, cgroupAvailable) && cgroupLimit <= total) {
+        return cgroupAvailable > reserve && size <= cgroupAvailable - reserve;
+    }
+#endif
+    const size_t committed = MemoryTracker::getSize();
+    return committed < total - reserve && size <= total - reserve - committed;
+}
+
 char Util::touchMemory(const char *memory, size_t size) {
     if (size == 0) {
+        return 0;
+    }
+    if (Util::canTouchMemory(size) == false) {
+        Debug(Debug::WARNING) << "Can not touch " << size << " into main memory\n";
         return 0;
     }
     const size_t pageSize = getPageSize();
@@ -400,10 +517,6 @@ char Util::touchMemory(const char *memory, size_t size) {
     const uintptr_t alignedAddress = address - (address % pageSize);
     Util::madviseLogged(reinterpret_cast<void *>(alignedAddress), size + (address - alignedAddress),
                         POSIX_MADV_WILLNEED, "touchMemory");
-    if(size > Util::getTotalSystemMemory()){
-        Debug(Debug::WARNING) << "Can not touch " << size << " into main memory\n";
-        return 0;
-    }
 
 //    Debug::Progress progress(size/pageSize);
     size_t fourTimesPageSize = 4*pageSize;
