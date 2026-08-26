@@ -31,8 +31,8 @@ int main (int, const char**) {
                                   : memoryPages * memoryPageSize;
     const size_t effectiveMemory = Util::getTotalSystemMemory();
     assert(effectiveMemory > 0);
-    assert(effectiveMemory <= physicalMemory);
-    if (effectiveMemory == 0 || effectiveMemory > physicalMemory) {
+    assert(effectiveMemory == physicalMemory);
+    if (effectiveMemory == 0 || effectiveMemory != physicalMemory) {
         return EXIT_FAILURE;
     }
 

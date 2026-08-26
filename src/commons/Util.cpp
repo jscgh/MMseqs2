@@ -268,6 +268,8 @@ bool getCgroupMemory(size_t &limit, size_t &available) {
                 if (readCgroupValue(path.usage, currentUsage)) {
                     available = std::min(available, CgroupMemory::availableMemory(
                         currentLimit, currentUsage, readCgroupStat(path.stat, path.inactiveFileKey)));
+                } else {
+                    available = 0;
                 }
                 found = true;
             }
@@ -588,17 +590,9 @@ size_t Util::getTotalSystemMemory() {
     static const size_t sysMemory = []() {
         const size_t pages = getTotalMemoryPages();
         const size_t pageSize = getPageSize();
-        size_t detected = pages > std::numeric_limits<size_t>::max() / pageSize
-                          ? std::numeric_limits<size_t>::max()
-                          : pages * pageSize;
-#ifdef __linux__
-        size_t cgroupLimit = 0;
-        size_t cgroupAvailable = 0;
-        if (getCgroupMemory(cgroupLimit, cgroupAvailable)) {
-            detected = std::min(detected, cgroupLimit);
-        }
-#endif
-        return detected;
+        return pages > std::numeric_limits<size_t>::max() / pageSize
+               ? std::numeric_limits<size_t>::max()
+               : pages * pageSize;
     }();
     // check for ulimit
 //    struct rlimit limit;
@@ -656,14 +650,15 @@ int Util::madviseLogged(void* addr, size_t len, int advice, const char* context)
 
 bool Util::canTouchMemory(size_t size) {
     const size_t total = Util::getTotalSystemMemory();
-    const size_t reserve = total / 10;
 #ifdef __linux__
     size_t cgroupLimit = 0;
     size_t cgroupAvailable = 0;
     if (getCgroupMemory(cgroupLimit, cgroupAvailable) && cgroupLimit <= total) {
+        const size_t reserve = cgroupLimit / 10;
         return cgroupAvailable > reserve && size <= cgroupAvailable - reserve;
     }
 #endif
+    const size_t reserve = total / 10;
     const size_t committed = MemoryTracker::getSize();
     return committed < total - reserve && size <= total - reserve - committed;
 }
