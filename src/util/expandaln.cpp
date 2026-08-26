@@ -164,12 +164,17 @@ int expandaln(int argc, const char **argv, const Command& command, bool returnAl
         std::vector<size_t> sequenceIds;
         sequenceIds.reserve(Matcher::PREFETCH_BATCH_SIZE);
         std::vector<Matcher::result_t> prefetchResults;
+        size_t prefetchBudget = Matcher::PREFETCH_MAX_BYTES;
         const auto flushSequences = [&]() {
-            cReader->prefetchData(sequenceIds);
+            if (prefetchBudget != 0) {
+                prefetchBudget -= cReader->prefetchData(sequenceIds, prefetchBudget);
+            }
             sequenceIds.clear();
         };
         const auto flushAlignments = [&]() {
-            resultBcReader->prefetchData(alignmentIds);
+            if (prefetchBudget != 0) {
+                prefetchBudget -= resultBcReader->prefetchData(alignmentIds, prefetchBudget);
+            }
             if (needsTargetData) {
                 for (size_t id : alignmentIds) {
                     Matcher::readAlignmentResults(prefetchResults, resultBcReader->getData(id, 0), false);

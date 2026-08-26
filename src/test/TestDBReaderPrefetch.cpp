@@ -29,6 +29,10 @@ int main(int, const char**) {
     }
     const std::vector<size_t> constIds(ids);
     reader.prefetchData(constIds);
+    const size_t prefetchedBytes = reader.prefetchData(ids, 1);
+    if (prefetchedBytes > 1) {
+        return EXIT_FAILURE;
+    }
 
     for (size_t i = 0; i < reader.getSize(); ++i) {
         if (reader.getData(i, 0) == NULL || std::strlen(reader.getData(i, 0)) == 0) {

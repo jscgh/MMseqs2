@@ -25,6 +25,8 @@ class Matcher{
 public:
     // Bound each selected-record prefetch buffer to approximately 8 MiB of IDs.
     static constexpr size_t PREFETCH_BATCH_SIZE = 1U << 20;
+    // Keep automatic selected-record prefetch below the memory available to the search itself.
+    static constexpr size_t PREFETCH_MAX_BYTES = 8ULL * 1024 * 1024 * 1024;
 
     static const unsigned int SCORE_ONLY = 0;
     static const unsigned int SCORE_COV = 1;

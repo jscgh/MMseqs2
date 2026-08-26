@@ -374,6 +374,9 @@ public:
     // Sorts and deduplicates IDs in place before touching their mapped pages.
     void prefetchData(std::vector<size_t> &ids);
 
+    // Touch at most maxBytes of mapped data and return the number of bytes touched.
+    size_t prefetchData(std::vector<size_t> &ids, size_t maxBytes);
+
     void mlock();
 
     void sortIndex(bool isSortedById);

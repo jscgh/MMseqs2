@@ -70,8 +70,13 @@ void DBReader<T>::prefetchData(const std::vector<size_t> &ids) {
 
 template <typename T>
 void DBReader<T>::prefetchData(std::vector<size_t> &ids) {
+    prefetchData(ids, SIZE_MAX);
+}
+
+template <typename T>
+size_t DBReader<T>::prefetchData(std::vector<size_t> &ids, size_t maxBytes) {
     if (ids.empty() || !(dataMode & USE_DATA) || (dataMode & USE_FREAD)) {
-        return;
+        return 0;
     }
 
     std::sort(ids.begin(), ids.end(), [this](size_t lhs, size_t rhs) {
@@ -86,6 +91,15 @@ void DBReader<T>::prefetchData(std::vector<size_t> &ids) {
     size_t rangeBegin = 0;
     size_t rangeEnd = 0;
     size_t file = 0;
+    size_t prefetchedBytes = 0;
+
+    const auto prefetchRange = [&](size_t fileIdx, size_t begin, size_t end) {
+        const size_t remainingBytes = maxBytes - prefetchedBytes;
+        const size_t rangeSize = std::min(end - begin, remainingBytes);
+        magicBytes += Util::touchMemory(dataFiles[fileIdx] + begin, rangeSize);
+        prefetchedBytes += rangeSize;
+        return rangeSize == end - begin;
+    };
 
     for (size_t id : ids) {
         const size_t offset = getOffset(id);
@@ -105,15 +119,18 @@ void DBReader<T>::prefetchData(std::vector<size_t> &ids) {
             continue;
         }
         if (currentFile != SIZE_MAX) {
-            magicBytes += Util::touchMemory(dataFiles[currentFile] + rangeBegin, rangeEnd - rangeBegin);
+            if (prefetchRange(currentFile, rangeBegin, rangeEnd) == false) {
+                return prefetchedBytes;
+            }
         }
         currentFile = file;
         rangeBegin = begin;
         rangeEnd = end;
     }
     if (currentFile != SIZE_MAX) {
-        magicBytes += Util::touchMemory(dataFiles[currentFile] + rangeBegin, rangeEnd - rangeBegin);
+        prefetchRange(currentFile, rangeBegin, rangeEnd);
     }
+    return prefetchedBytes;
 }
 
 template <typename T>
