@@ -100,10 +100,14 @@ size_t DBReader<T>::prefetchData(std::vector<size_t> &ids, size_t maxBytes) {
     const auto prefetchRange = [&](size_t fileIdx, size_t begin, size_t end) {
         const size_t remainingBytes = maxBytes - prefetchedBytes;
         const size_t rangeSize = std::min(end - begin, remainingBytes);
-        if (rangeSize == 0 || Util::canTouchMemory(rangeSize) == false) {
+        if (rangeSize == 0) {
             return false;
         }
-        magicBytes += Util::touchMemory(dataFiles[fileIdx] + begin, rangeSize);
+        bool admitted = false;
+        magicBytes += Util::touchMemory(dataFiles[fileIdx] + begin, rangeSize, &admitted);
+        if (admitted == false) {
+            return false;
+        }
         prefetchedBytes += rangeSize;
         return rangeSize == end - begin;
     };

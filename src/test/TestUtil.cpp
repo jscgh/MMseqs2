@@ -69,10 +69,12 @@ int main (int, const char**) {
     for (size_t page = 0; page <= 5; ++page) {
         pages[page * pageSize] = 1;
     }
-    const char touchedPages = Util::touchMemory(pages, touchedSize);
+    bool admitted = false;
+    const char touchedPages = Util::touchMemory(pages, touchedSize, &admitted);
+    assert(admitted);
     assert(touchedPages == 6);
     free(allocation);
-    if (touchedPages != 6) {
+    if (admitted == false || touchedPages != 6) {
         return EXIT_FAILURE;
     }
 

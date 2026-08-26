@@ -98,7 +98,7 @@ public:
     static uint64_t getL2CacheSize();
 
     static bool canTouchMemory(size_t size);
-    static char touchMemory(const char* memory, size_t size);
+    static char touchMemory(const char* memory, size_t size, bool *admitted = NULL);
 
     // Wrap posix_madvise with errno-aware logging. Returns posix_madvise's
     // return value (errno-valued, 0 on success). Severity is WARNING for

@@ -690,13 +690,19 @@ bool Util::canTouchMemory(size_t size) {
     return committed < total - reserve && size <= total - reserve - committed;
 }
 
-char Util::touchMemory(const char *memory, size_t size) {
+char Util::touchMemory(const char *memory, size_t size, bool *admitted) {
+    if (admitted != NULL) {
+        *admitted = false;
+    }
     if (size == 0) {
         return 0;
     }
     if (Util::canTouchMemory(size) == false) {
         Debug(Debug::WARNING) << "Can not touch " << size << " into main memory\n";
         return 0;
+    }
+    if (admitted != NULL) {
+        *admitted = true;
     }
     const size_t pageSize = getPageSize();
     const uintptr_t address = reinterpret_cast<uintptr_t>(memory);
