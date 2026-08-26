@@ -166,16 +166,22 @@ int expandaln(int argc, const char **argv, const Command& command, bool returnAl
         std::vector<Matcher::result_t> prefetchResults;
         size_t prefetchBudget = Matcher::PREFETCH_MAX_BYTES;
         const auto flushSequences = [&]() {
-            if (prefetchBudget != 0) {
-                prefetchBudget -= cReader->prefetchData(sequenceIds, prefetchBudget);
+            if (sequenceIds.empty()) {
+                return prefetchBudget != 0;
             }
+            const size_t touchedBytes = cReader->prefetchData(sequenceIds, prefetchBudget);
+            prefetchBudget -= touchedBytes;
             sequenceIds.clear();
+            return touchedBytes != 0 && prefetchBudget != 0;
         };
         const auto flushAlignments = [&]() {
-            if (prefetchBudget != 0) {
-                prefetchBudget -= resultBcReader->prefetchData(alignmentIds, prefetchBudget);
+            if (alignmentIds.empty()) {
+                return prefetchBudget != 0;
             }
-            if (needsTargetData) {
+            const size_t touchedBytes = resultBcReader->prefetchData(alignmentIds, prefetchBudget);
+            prefetchBudget -= touchedBytes;
+            bool keepPrefetching = touchedBytes != 0 && prefetchBudget != 0;
+            if (needsTargetData && keepPrefetching) {
                 for (size_t id : alignmentIds) {
                     Matcher::readAlignmentResults(prefetchResults, resultBcReader->getData(id, 0), false);
                     for (const Matcher::result_t &result : prefetchResults) {
@@ -183,15 +189,23 @@ int expandaln(int argc, const char **argv, const Command& command, bool returnAl
                         if (sequenceId != DB_ENTRY_NOT_FOUND) {
                             sequenceIds.push_back(sequenceId);
                             if (sequenceIds.size() >= Matcher::PREFETCH_BATCH_SIZE) {
-                                flushSequences();
+                                keepPrefetching = flushSequences();
+                                if (keepPrefetching == false) {
+                                    break;
+                                }
                             }
                         }
                     }
                     prefetchResults.clear();
+                    if (keepPrefetching == false) {
+                        break;
+                    }
                 }
             }
             alignmentIds.clear();
+            return keepPrefetching;
         };
+        bool keepPrefetching = true;
         for (size_t i = 0; i < resultAbReader->getSize(); ++i) {
             char *data = resultAbReader->getData(i, 0);
             while (*data != '\0') {
@@ -204,13 +218,23 @@ int expandaln(int argc, const char **argv, const Command& command, bool returnAl
                 if (id != DB_ENTRY_NOT_FOUND) {
                     alignmentIds.push_back(id);
                     if (alignmentIds.size() >= Matcher::PREFETCH_BATCH_SIZE) {
-                        flushAlignments();
+                        keepPrefetching = flushAlignments();
+                        if (keepPrefetching == false) {
+                            break;
+                        }
                     }
                 }
             }
+            if (keepPrefetching == false) {
+                break;
+            }
         }
-        flushAlignments();
-        flushSequences();
+        if (keepPrefetching) {
+            keepPrefetching = flushAlignments();
+        }
+        if (keepPrefetching && sequenceIds.empty() == false) {
+            flushSequences();
+        }
     }
     EvalueComputation *evaluer = NULL;
     ProbabilityMatrix *probMatrix = NULL;
