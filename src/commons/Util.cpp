@@ -245,18 +245,18 @@ bool getCgroupMemory(size_t &limit, size_t &available) {
     if (files.hierarchies.empty()) {
         return false;
     }
-    std::vector<bool> verified(files.hierarchies.size(), false);
-    bool hasVerifiedHierarchy = false;
-    for (size_t i = 0; i < files.hierarchies.size(); ++i) {
-        if (containsProcess(files.hierarchies[i].processes, getpid())) {
-            verified[i] = true;
-            hasVerifiedHierarchy = true;
+    static const std::vector<size_t> hierarchyOrder = []() {
+        std::vector<size_t> verified;
+        std::vector<size_t> fallback;
+        for (size_t i = 0; i < files.hierarchies.size(); ++i) {
+            fallback.push_back(i);
+            if (containsProcess(files.hierarchies[i].processes, getpid())) {
+                verified.push_back(i);
+            }
         }
-    }
-    for (size_t i = 0; i < files.hierarchies.size(); ++i) {
-        if (hasVerifiedHierarchy && verified[i] == false) {
-            continue;
-        }
+        return verified.empty() ? fallback : verified;
+    }();
+    for (size_t i : hierarchyOrder) {
         bool found = false;
         limit = std::numeric_limits<size_t>::max();
         available = std::numeric_limits<size_t>::max();
