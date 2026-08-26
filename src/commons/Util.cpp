@@ -99,10 +99,13 @@ std::string resolvePath(const Mount &mount, const std::string &hierarchyPath) {
                hierarchyPath.size() > mount.root.size() && hierarchyPath[mount.root.size()] == '/') {
         relative = hierarchyPath.substr(mount.root.size());
     } else {
-        // /proc/self/cgroup paths are relative to the cgroup namespace root.
-        relative = hierarchyPath;
+        return std::string();
     }
     return relative == "/" ? mount.path : mount.path + relative;
+}
+
+std::string resolveNamespacePath(const Mount &mount, const std::string &hierarchyPath) {
+    return hierarchyPath == "/" ? mount.path : mount.path + hierarchyPath;
 }
 
 size_t availableMemory(size_t limit, size_t usage, size_t inactiveFile) {
@@ -140,8 +143,32 @@ struct CgroupMemoryFiles {
         std::string stat;
         std::string inactiveFileKey;
     };
-    std::vector<Path> paths;
+    std::vector<std::vector<Path> > hierarchies;
 };
+
+void addCgroupHierarchy(CgroupMemoryFiles &files, const CgroupMemory::Mount &mount,
+                        const std::string &currentPath, bool unified) {
+    std::vector<CgroupMemoryFiles::Path> paths;
+    const std::string root = mount.path;
+    std::string current = currentPath;
+    const char *limitName = unified ? "/memory.max" : "/memory.limit_in_bytes";
+    const char *usageName = unified ? "/memory.current" : "/memory.usage_in_bytes";
+    const char *inactiveFileKey = unified ? "inactive_file" : "total_inactive_file";
+    while (current.size() >= root.size()) {
+        paths.push_back(CgroupMemoryFiles::Path{
+            current + limitName,
+            current + usageName,
+            current + "/memory.stat",
+            inactiveFileKey
+        });
+        if (current == root) {
+            break;
+        }
+        const size_t slash = current.find_last_of('/');
+        current.resize(std::max(slash, root.size()));
+    }
+    files.hierarchies.push_back(paths);
+}
 
 CgroupMemoryFiles findCgroupMemoryFiles() {
     CgroupMemoryFiles files;
@@ -160,28 +187,25 @@ CgroupMemoryFiles findCgroupMemoryFiles() {
         const bool isUnified = hierarchy == "0" && controllers.empty();
         const bool isMemory = ("," + controllers + ",").find(",memory,") != std::string::npos;
         if (isUnified || isMemory) {
+            const std::string hierarchyPath = line.substr(second + 1);
+            std::vector<const CgroupMemory::Mount *> fallbackMounts;
             for (const CgroupMemory::Mount &candidate : mounts) {
                 if (candidate.unified != isUnified) {
                     continue;
                 }
-                const std::string root = candidate.path;
-                std::string current = CgroupMemory::resolvePath(candidate, line.substr(second + 1));
-                const char *limitName = isUnified ? "/memory.max" : "/memory.limit_in_bytes";
-                const char *usageName = isUnified ? "/memory.current" : "/memory.usage_in_bytes";
-                const char *inactiveFileKey = isUnified ? "inactive_file" : "total_inactive_file";
-                while (current.size() >= root.size()) {
-                    files.paths.push_back(CgroupMemoryFiles::Path{
-                        current + limitName,
-                        current + usageName,
-                        current + "/memory.stat",
-                        inactiveFileKey
-                    });
-                    if (current == root) {
-                        break;
-                    }
-                    const size_t slash = current.find_last_of('/');
-                    current.resize(std::max(slash, root.size()));
+                const std::string current = CgroupMemory::resolvePath(candidate, hierarchyPath);
+                if (current.empty()) {
+                    fallbackMounts.push_back(&candidate);
+                } else {
+                    addCgroupHierarchy(files, candidate, current, isUnified);
                 }
+            }
+            // In a cgroup namespace, /proc/self/cgroup is relative to the
+            // namespace root and may not include mountinfo's subtree root.
+            for (const CgroupMemory::Mount *candidate : fallbackMounts) {
+                addCgroupHierarchy(files, *candidate,
+                                   CgroupMemory::resolveNamespacePath(*candidate, hierarchyPath),
+                                   isUnified);
             }
             break;
         }
@@ -203,25 +227,30 @@ size_t readCgroupStat(const std::string &path, const std::string &key) {
 
 bool getCgroupMemory(size_t &limit, size_t &available) {
     static const CgroupMemoryFiles files = findCgroupMemoryFiles();
-    if (files.paths.empty()) {
+    if (files.hierarchies.empty()) {
         return false;
     }
-    bool found = false;
-    limit = std::numeric_limits<size_t>::max();
-    available = std::numeric_limits<size_t>::max();
-    for (const CgroupMemoryFiles::Path &path : files.paths) {
-        size_t currentLimit = 0;
-        if (readCgroupValue(path.limit, currentLimit)) {
-            size_t currentUsage = 0;
-            limit = std::min(limit, currentLimit);
-            if (readCgroupValue(path.usage, currentUsage)) {
-                available = std::min(available, CgroupMemory::availableMemory(
-                    currentLimit, currentUsage, readCgroupStat(path.stat, path.inactiveFileKey)));
+    for (const std::vector<CgroupMemoryFiles::Path> &paths : files.hierarchies) {
+        bool found = false;
+        limit = std::numeric_limits<size_t>::max();
+        available = std::numeric_limits<size_t>::max();
+        for (const CgroupMemoryFiles::Path &path : paths) {
+            size_t currentLimit = 0;
+            if (readCgroupValue(path.limit, currentLimit)) {
+                size_t currentUsage = 0;
+                limit = std::min(limit, currentLimit);
+                if (readCgroupValue(path.usage, currentUsage)) {
+                    available = std::min(available, CgroupMemory::availableMemory(
+                        currentLimit, currentUsage, readCgroupStat(path.stat, path.inactiveFileKey)));
+                }
+                found = true;
             }
-            found = true;
+        }
+        if (found) {
+            return true;
         }
     }
-    return found;
+    return false;
 }
 #endif
 

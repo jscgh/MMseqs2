@@ -18,6 +18,8 @@ std::vector<Mount> parseMounts(std::istream &input);
 
 std::string resolvePath(const Mount &mount, const std::string &hierarchyPath);
 
+std::string resolveNamespacePath(const Mount &mount, const std::string &hierarchyPath);
+
 std::size_t availableMemory(std::size_t limit, std::size_t usage, std::size_t inactiveFile);
 
 }
