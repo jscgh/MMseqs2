@@ -265,36 +265,42 @@ bool getCgroupMemory(size_t &limit, size_t &available) {
         }
         return verified.empty() ? fallback : verified;
     }();
-    bool foundReadableHierarchy = false;
-    bool foundInvalidLimit = false;
+    bool foundUnlimitedHierarchy = false;
     for (size_t i : hierarchyOrder) {
-        bool found = false;
+        bool foundFiniteLimit = false;
+        bool foundInvalidValue = false;
+        bool foundReadableValue = false;
         limit = std::numeric_limits<size_t>::max();
         available = std::numeric_limits<size_t>::max();
         for (const CgroupMemoryFiles::Path &path : files.hierarchies[i].paths) {
             size_t currentLimit = 0;
             const CgroupValueStatus limitStatus = readCgroupValue(path.limit, currentLimit);
             if (limitStatus == CGROUP_VALUE_UNLIMITED) {
-                foundReadableHierarchy = true;
+                foundReadableValue = true;
             } else if (limitStatus == CGROUP_VALUE_VALID) {
                 size_t currentUsage = 0;
+                foundReadableValue = true;
                 limit = std::min(limit, currentLimit);
                 if (readCgroupValue(path.usage, currentUsage) == CGROUP_VALUE_VALID) {
                     available = std::min(available, CgroupMemory::availableMemory(
                         currentLimit, currentUsage, readCgroupStat(path.stat, path.inactiveFileKey)));
                 } else {
-                    available = 0;
+                    foundInvalidValue = true;
                 }
-                found = true;
+                foundFiniteLimit = true;
             } else {
-                foundInvalidLimit = true;
+                foundInvalidValue = true;
             }
         }
-        if (found) {
+        if (foundInvalidValue) {
+            continue;
+        }
+        if (foundFiniteLimit) {
             return true;
         }
+        foundUnlimitedHierarchy = foundUnlimitedHierarchy || foundReadableValue;
     }
-    if (foundReadableHierarchy && foundInvalidLimit == false) {
+    if (foundUnlimitedHierarchy) {
         return false;
     }
     limit = 0;
