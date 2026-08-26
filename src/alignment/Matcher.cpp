@@ -170,9 +170,10 @@ size_t Matcher::prefetchTargetData(DBReader<DBKeyType> &resultReader,
     targetIds.reserve(std::min(batchSize, end - start));
     size_t prefetchedBytes = 0;
     const auto flush = [&]() {
-        prefetchedBytes += targetReader.prefetchData(targetIds, maxBytes - prefetchedBytes);
+        const size_t touchedBytes = targetReader.prefetchData(targetIds, maxBytes - prefetchedBytes);
+        prefetchedBytes += touchedBytes;
         targetIds.clear();
-        return prefetchedBytes < maxBytes;
+        return touchedBytes != 0 && prefetchedBytes < maxBytes;
     };
     for (size_t i = start; i < end; ++i) {
         char *data = resultReader.getData(i, 0);
