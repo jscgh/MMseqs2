@@ -29,10 +29,33 @@ int main(int, const char**) {
     }
     const std::vector<size_t> constIds(ids);
     reader.prefetchData(constIds);
+    if (reader.prefetchData(ids, 0) != 0) {
+        return EXIT_FAILURE;
+    }
     const size_t prefetchedBytes = reader.prefetchData(ids, 1);
     if (prefetchedBytes > 1) {
         return EXIT_FAILURE;
     }
+
+    DBReader<DBKeyType> indexOnlyReader(
+        "dataGap", "dataGap.index", 1, DBReader<DBKeyType>::USE_INDEX
+    );
+    indexOnlyReader.open(DBReader<DBKeyType>::NOSORT);
+    if (indexOnlyReader.prefetchData(ids, SIZE_MAX) != 0) {
+        return EXIT_FAILURE;
+    }
+    indexOnlyReader.close();
+
+    DBReader<DBKeyType> freadReader(
+        "dataGap", "dataGap.index", 1,
+        DBReader<DBKeyType>::USE_INDEX | DBReader<DBKeyType>::USE_DATA |
+            DBReader<DBKeyType>::USE_FREAD
+    );
+    freadReader.open(DBReader<DBKeyType>::NOSORT);
+    if (freadReader.prefetchData(ids, SIZE_MAX) != 0) {
+        return EXIT_FAILURE;
+    }
+    freadReader.close();
 
     for (size_t i = 0; i < reader.getSize(); ++i) {
         if (reader.getData(i, 0) == NULL || std::strlen(reader.getData(i, 0)) == 0) {
@@ -65,5 +88,30 @@ int main(int, const char**) {
     DBReader<DBKeyType>::removeDb("prefetchResults");
 
     reader.close();
+
+    DBWriter splitWriter(
+        "prefetchSplit", "prefetchSplit.index", 2, 0,
+        Parameters::DBTYPE_AMINO_ACIDS
+    );
+    splitWriter.open();
+    splitWriter.writeData("AAAA", 4, 10, 0);
+    splitWriter.writeData("BBBB", 4, 20, 1);
+    splitWriter.close(false);
+
+    DBReader<DBKeyType> splitReader(
+        "prefetchSplit", "prefetchSplit.index", 1,
+        DBReader<DBKeyType>::USE_INDEX | DBReader<DBKeyType>::USE_DATA
+    );
+    splitReader.open(DBReader<DBKeyType>::NOSORT);
+    std::vector<size_t> splitIds;
+    splitIds.push_back(splitReader.getId(20));
+    splitIds.push_back(splitReader.getId(10));
+    if (splitReader.getDataFileCnt() != 2 ||
+        splitReader.prefetchData(splitIds, SIZE_MAX) != splitReader.getTotalDataSize()) {
+        return EXIT_FAILURE;
+    }
+    splitReader.close();
+    DBReader<DBKeyType>::removeDb("prefetchSplit");
+
     return EXIT_SUCCESS;
 }

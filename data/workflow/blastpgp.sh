@@ -118,7 +118,6 @@ while [ "$STEP" -lt "$NUM_IT" ]; do
                 "$MMSEQS" mergedbs "$QUERYDB" "$3" "$TMP_PATH/aln_$STEPONE" "$TMP_PATH/aln_tmp_$STEP" \
                     || fail "Alignment died"
             fi
-            # Keep merged iteration results for downstream workflows that reuse them.
             "$MMSEQS" rmdb "$TMP_PATH/aln_tmp_$STEP"
             touch "$TMP_PATH/aln_$STEP.done"
         fi

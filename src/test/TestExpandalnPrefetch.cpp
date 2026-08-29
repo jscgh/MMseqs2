@@ -26,6 +26,8 @@ const char *TARGET_DB = "expandPrefetchTarget";
 const char *RESULT_AB_DB = "expandPrefetchResultAb";
 const char *RESULT_BC_DB = "expandPrefetchResultBc";
 const char *AUTO_DB = "expandPrefetchAuto";
+const char *FREAD_DB = "expandPrefetchFread";
+const char *MMAP_DB = "expandPrefetchMmap";
 const char *TOUCH_DB = "expandPrefetchTouch";
 
 Command makeExpandalnCommand(Parameters &par) {
@@ -49,6 +51,8 @@ void removeDatabases() {
     DBReader<DBKeyType>::removeDb(RESULT_AB_DB);
     DBReader<DBKeyType>::removeDb(RESULT_BC_DB);
     DBReader<DBKeyType>::removeDb(AUTO_DB);
+    DBReader<DBKeyType>::removeDb(FREAD_DB);
+    DBReader<DBKeyType>::removeDb(MMAP_DB);
     DBReader<DBKeyType>::removeDb(TOUCH_DB);
 }
 
@@ -123,8 +127,12 @@ int main(int, const char**) {
     Parameters &par = Parameters::getInstance();
     const Command command = makeExpandalnCommand(par);
     const bool succeeded = runExpandaln(command, AUTO_DB, Parameters::PRELOAD_MODE_AUTO) == EXIT_SUCCESS &&
+                           runExpandaln(command, FREAD_DB, Parameters::PRELOAD_MODE_FREAD) == EXIT_SUCCESS &&
+                           runExpandaln(command, MMAP_DB, Parameters::PRELOAD_MODE_MMAP) == EXIT_SUCCESS &&
                            runExpandaln(command, TOUCH_DB, Parameters::PRELOAD_MODE_MMAP_TOUCH) == EXIT_SUCCESS;
-    const bool equal = succeeded && databasesEqual(AUTO_DB, TOUCH_DB);
+    const bool equal = succeeded && databasesEqual(AUTO_DB, FREAD_DB) &&
+                       databasesEqual(AUTO_DB, MMAP_DB) &&
+                       databasesEqual(AUTO_DB, TOUCH_DB);
 
     removeDatabases();
     return equal ? EXIT_SUCCESS : EXIT_FAILURE;
