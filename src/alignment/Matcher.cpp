@@ -180,7 +180,7 @@ size_t Matcher::prefetchTargetData(DBReader<DBKeyType> &resultReader,
         while (*data != '\0') {
             const DBKeyType targetKey = Util::fast_atoi<DBKeyType>(data);
             data = Util::skipLine(data);
-            size_t id = targetReader.getId(targetKey);
+            const size_t id = targetReader.getId(targetKey);
             if (id != DB_ENTRY_NOT_FOUND) {
                 targetIds.push_back(id);
                 if (targetIds.size() >= batchSize) {

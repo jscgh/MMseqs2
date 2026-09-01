@@ -27,13 +27,10 @@ int main(int, const char**) {
         }) || std::adjacent_find(ids.begin(), ids.end()) != ids.end()) {
         return EXIT_FAILURE;
     }
-    const std::vector<size_t> constIds(ids);
-    reader.prefetchData(constIds);
     if (reader.prefetchData(ids, 0) != 0) {
         return EXIT_FAILURE;
     }
-    const size_t prefetchedBytes = reader.prefetchData(ids, 1);
-    if (prefetchedBytes > 1) {
+    if (reader.prefetchData(ids, 1) != 1) {
         return EXIT_FAILURE;
     }
 
@@ -81,7 +78,7 @@ int main(int, const char**) {
     resultReader.open(DBReader<DBKeyType>::LINEAR_ACCCESS);
     Matcher::prefetchTargetData(resultReader, reader, 0, SIZE_MAX, 2);
     Matcher::prefetchTargetData(resultReader, reader, 1, 1, 0);
-    if (Matcher::prefetchTargetData(resultReader, reader, 0, SIZE_MAX, 2, 1) > 1) {
+    if (Matcher::prefetchTargetData(resultReader, reader, 0, SIZE_MAX, 2, 1) != 1) {
         return EXIT_FAILURE;
     }
     resultReader.close();

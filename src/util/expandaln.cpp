@@ -103,9 +103,9 @@ int expandaln(int argc, const char **argv, const Command& command, bool returnAl
     IndexReader *cReaderIdx = NULL;
     DBReader<DBKeyType> *resultBcReader = NULL;
     IndexReader *resultBcReaderIdx = NULL;
+    const bool touch = par.preloadMode == Parameters::PRELOAD_MODE_FREAD ||
+                       par.preloadMode == Parameters::PRELOAD_MODE_MMAP_TOUCH;
     if (Parameters::isEqualDbtype(FileUtil::parseDbType(par.db2.c_str()), Parameters::DBTYPE_INDEX_DB)) {
-        bool touch = (par.preloadMode == Parameters::PRELOAD_MODE_FREAD ||
-                      par.preloadMode == Parameters::PRELOAD_MODE_MMAP_TOUCH);
         cReaderIdx = new IndexReader(par.db2, par.threads,
                                      IndexReader::SRC_SEQUENCES,
                                      (touch) ? (IndexReader::PRELOAD_INDEX | IndexReader::PRELOAD_DATA) : 0);
@@ -117,15 +117,13 @@ int expandaln(int argc, const char **argv, const Command& command, bool returnAl
     } else {
         cReader = new DBReader<DBKeyType>(par.db2.c_str(), par.db2Index.c_str(), par.threads, DBReader<DBKeyType>::USE_INDEX | DBReader<DBKeyType>::USE_DATA);
         cReader->open(DBReader<DBKeyType>::NOSORT);
-        if (par.preloadMode == Parameters::PRELOAD_MODE_FREAD ||
-            par.preloadMode == Parameters::PRELOAD_MODE_MMAP_TOUCH) {
+        if (touch) {
             cReader->readMmapedDataInMemory();
         }
 
         resultBcReader = new DBReader<DBKeyType>(par.db4.c_str(), par.db4Index.c_str(), par.threads, DBReader<DBKeyType>::USE_INDEX | DBReader<DBKeyType>::USE_DATA);
         resultBcReader->open(DBReader<DBKeyType>::NOSORT);
-        if (par.preloadMode == Parameters::PRELOAD_MODE_FREAD ||
-            par.preloadMode == Parameters::PRELOAD_MODE_MMAP_TOUCH) {
+        if (touch) {
             resultBcReader->readMmapedDataInMemory();
         }
     }
@@ -185,7 +183,7 @@ int expandaln(int argc, const char **argv, const Command& command, bool returnAl
                 for (size_t id : alignmentIds) {
                     Matcher::readAlignmentResults(prefetchResults, resultBcReader->getData(id, 0), false);
                     for (const Matcher::result_t &result : prefetchResults) {
-                        size_t sequenceId = cReader->getId(result.dbKey);
+                        const size_t sequenceId = cReader->getId(result.dbKey);
                         if (sequenceId != DB_ENTRY_NOT_FOUND) {
                             sequenceIds.push_back(sequenceId);
                             if (sequenceIds.size() >= Matcher::PREFETCH_BATCH_SIZE) {
@@ -214,7 +212,7 @@ int expandaln(int argc, const char **argv, const Command& command, bool returnAl
                 if (returnAlnRes == false && resultAb.eval > par.evalProfile) {
                     continue;
                 }
-                size_t id = resultBcReader->getId(resultAb.dbKey);
+                const size_t id = resultBcReader->getId(resultAb.dbKey);
                 if (id != DB_ENTRY_NOT_FOUND) {
                     alignmentIds.push_back(id);
                     if (alignmentIds.size() >= Matcher::PREFETCH_BATCH_SIZE) {

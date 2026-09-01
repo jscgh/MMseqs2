@@ -56,8 +56,8 @@ Alignment::Alignment(const std::string &querySeqDB, const std::string &targetSeq
     }
 
     uint16_t extended = DBReader<DBKeyType>::getExtendedDbtype(FileUtil::parseDbType(prefDB.c_str()));
-    bool touch = (par.preloadMode == Parameters::PRELOAD_MODE_FREAD ||
-                  par.preloadMode == Parameters::PRELOAD_MODE_MMAP_TOUCH);
+    const bool touch = par.preloadMode == Parameters::PRELOAD_MODE_FREAD ||
+                       par.preloadMode == Parameters::PRELOAD_MODE_MMAP_TOUCH;
     tDbrIdx = new IndexReader(targetSeqDB, par.threads,
                               extended & Parameters::DBTYPE_EXTENDED_INDEX_NEED_SRC ? IndexReader::SRC_SEQUENCES : IndexReader::SEQUENCES,
                               (touch) ? (IndexReader::PRELOAD_INDEX | IndexReader::PRELOAD_DATA) : 0);
