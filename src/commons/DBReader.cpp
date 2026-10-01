@@ -63,6 +63,66 @@ void DBReader<T>::readMmapedDataInMemory(){
 }
 
 template <typename T>
+size_t DBReader<T>::prefetchData(std::vector<size_t> &ids, size_t maxBytes) {
+    if (ids.empty() || maxBytes == 0 || !(dataMode & USE_DATA) || (dataMode & USE_FREAD)) {
+        return 0;
+    }
+
+    std::sort(ids.begin(), ids.end(), [this](size_t lhs, size_t rhs) {
+        const size_t lhsOffset = getOffset(lhs);
+        const size_t rhsOffset = getOffset(rhs);
+        return lhsOffset != rhsOffset ? lhsOffset < rhsOffset : lhs < rhs;
+    });
+    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+
+    const size_t pageSize = Util::getPageSize();
+    size_t currentFile = SIZE_MAX;
+    size_t rangeBegin = 0;
+    size_t rangeEnd = 0;
+    size_t file = 0;
+    size_t prefetchedBytes = 0;
+
+    const auto prefetchRange = [&](size_t fileIdx, size_t begin, size_t end) {
+        const size_t remainingBytes = maxBytes - prefetchedBytes;
+        const size_t rangeSize = std::min(end - begin, remainingBytes);
+        magicBytes += Util::touchMemory(dataFiles[fileIdx] + begin, rangeSize);
+        prefetchedBytes += rangeSize;
+        return rangeSize == end - begin;
+    };
+
+    for (size_t id : ids) {
+        const size_t offset = getOffset(id);
+        while (file + 1 < dataFileCnt && offset >= dataSizeOffset[file + 1]) {
+            ++file;
+        }
+        const size_t fileOffset = offset - dataSizeOffset[file];
+        const size_t begin = (fileOffset / pageSize) * pageSize;
+        const size_t fileSize = dataSizeOffset[file + 1] - dataSizeOffset[file];
+        const size_t end = std::min(
+            ((fileOffset + getEntryLen(id) + pageSize - 1) / pageSize) * pageSize,
+            fileSize
+        );
+
+        if (currentFile == file && begin <= rangeEnd) {
+            rangeEnd = std::max(rangeEnd, end);
+            continue;
+        }
+        if (currentFile != SIZE_MAX) {
+            if (prefetchRange(currentFile, rangeBegin, rangeEnd) == false) {
+                return prefetchedBytes;
+            }
+        }
+        currentFile = file;
+        rangeBegin = begin;
+        rangeEnd = end;
+    }
+    if (currentFile != SIZE_MAX) {
+        prefetchRange(currentFile, rangeBegin, rangeEnd);
+    }
+    return prefetchedBytes;
+}
+
+template <typename T>
 void DBReader<T>::mlock(){
     if (dataMode & USE_DATA) {
         if (didMlock == false) {

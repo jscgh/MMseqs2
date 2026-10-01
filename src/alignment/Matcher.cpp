@@ -3,6 +3,7 @@
 #include "Matcher.h"
 #include "Util.h"
 #include "Parameters.h"
+#include "DBReader.h"
 #include "StripedSmithWaterman.h"
 #include <fast_float/fast_float.h>
 
@@ -153,6 +154,45 @@ void Matcher::readAlignmentResults(std::vector<result_t> &result, char *data, bo
         result.emplace_back(parseAlignmentRecord(data, readCompressed));
         data = Util::skipLine(data);
     }
+}
+
+size_t Matcher::prefetchTargetData(DBReader<DBKeyType> &resultReader,
+                                   DBReader<DBKeyType> &targetReader,
+                                   size_t start, size_t count, size_t batchSize,
+                                   size_t maxBytes) {
+    const size_t resultSize = resultReader.getSize();
+    if (start >= resultSize) {
+        return 0;
+    }
+    const size_t end = start + std::min(count, resultSize - start);
+    batchSize = std::max(batchSize, static_cast<size_t>(1));
+    std::vector<size_t> targetIds;
+    targetIds.reserve(std::min(batchSize, end - start));
+    size_t prefetchedBytes = 0;
+    const auto flush = [&]() {
+        const size_t touchedBytes = targetReader.prefetchData(targetIds, maxBytes - prefetchedBytes);
+        prefetchedBytes += touchedBytes;
+        targetIds.clear();
+        return touchedBytes != 0 && prefetchedBytes < maxBytes;
+    };
+    for (size_t i = start; i < end; ++i) {
+        char *data = resultReader.getData(i, 0);
+        while (*data != '\0') {
+            const DBKeyType targetKey = Util::fast_atoi<DBKeyType>(data);
+            data = Util::skipLine(data);
+            const size_t id = targetReader.getId(targetKey);
+            if (id != DB_ENTRY_NOT_FOUND) {
+                targetIds.push_back(id);
+                if (targetIds.size() >= batchSize) {
+                    if (flush() == false) {
+                        return prefetchedBytes;
+                    }
+                }
+            }
+        }
+    }
+    flush();
+    return prefetchedBytes;
 }
 
 int Matcher::computeAlnLength(int qStart, int qEnd, int dbStart, int dbEnd) {

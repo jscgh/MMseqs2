@@ -10,6 +10,7 @@ set(TESTS
         TestCompositionBias.cpp
         TestCounting.cpp
         TestDBReader.cpp
+        TestDBReaderPrefetch.cpp
         TestDBReaderIndexSerialization.cpp
         TestDiagonalScoring.cpp
         TestDiagonalScoringPerformance.cpp

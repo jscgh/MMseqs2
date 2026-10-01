@@ -18,9 +18,17 @@
 #include "EvalueComputation.h"
 #include "BandedNucleotideAligner.h"
 
+template<typename T> class DBReader;
+
 class Matcher{
 
 public:
+    // Bound each selected-record prefetch buffer to approximately 8 MiB of IDs.
+    static constexpr size_t PREFETCH_BATCH_SIZE = 8U * 1024 * 1024 / sizeof(size_t);
+    // Keep automatic selected-record prefetch below the memory available to the search itself.
+    static constexpr size_t PREFETCH_MAX_BYTES =
+        sizeof(size_t) > 4 ? static_cast<size_t>(8ULL * 1024 * 1024 * 1024) : SIZE_MAX;
+
     static const unsigned int SCORE_ONLY = 0;
     static const unsigned int SCORE_COV = 1;
     static const unsigned int SCORE_COV_SEQID = 2;
@@ -212,6 +220,12 @@ public:
     static result_t parseAlignmentRecord(const char *data, bool readCompressed=false);
 
     static void readAlignmentResults(std::vector<result_t> &result, char *data, bool readCompressed = false);
+
+    static size_t prefetchTargetData(DBReader<DBKeyType> &resultReader,
+                                     DBReader<DBKeyType> &targetReader,
+                                     size_t start = 0, size_t count = SIZE_MAX,
+                                     size_t batchSize = PREFETCH_BATCH_SIZE,
+                                     size_t maxBytes = PREFETCH_MAX_BYTES);
 
     static float estimateSeqIdByScorePerCol(uint32_t score, unsigned int qLen, unsigned int tLen);
 
