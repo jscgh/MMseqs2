@@ -368,6 +368,9 @@ public:
 
     void readMmapedDataInMemory();
 
+    // Sort and deduplicate IDs in place, then touch at most maxBytes of mapped data.
+    size_t prefetchData(std::vector<size_t> &ids, size_t maxBytes = SIZE_MAX);
+
     void mlock();
 
     void sortIndex(bool isSortedById);

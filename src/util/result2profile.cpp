@@ -65,10 +65,13 @@ int result2profile(int argc, const char **argv, const Command &command, bool ret
     bool needSrcIndex = false;
     int targetSeqType = -1;
     int targetDbtype = FileUtil::parseDbType(par.db2.c_str());
+    const int preloadMode = par.preloadMode == Parameters::PRELOAD_MODE_AUTO
+                            ? Parameters::PRELOAD_MODE_MMAP_TOUCH
+                            : par.preloadMode;
+    const bool touch = preloadMode == Parameters::PRELOAD_MODE_FREAD;
     if (Parameters::isEqualDbtype(targetDbtype, Parameters::DBTYPE_INDEX_DB)) {
         uint16_t extended = DBReader<DBKeyType>::getExtendedDbtype(FileUtil::parseDbType(par.db3.c_str()));
         needSrcIndex = extended & Parameters::DBTYPE_EXTENDED_INDEX_NEED_SRC;
-        bool touch = (par.preloadMode != Parameters::PRELOAD_MODE_MMAP);
         tDbrIdx = new IndexReader(par.db2, par.threads,
                                   needSrcIndex ? IndexReader::SRC_SEQUENCES : IndexReader::SEQUENCES,
                                   (touch) ? (IndexReader::PRELOAD_INDEX | IndexReader::PRELOAD_DATA) : 0);
@@ -88,7 +91,7 @@ int result2profile(int argc, const char **argv, const Command &command, bool ret
     if (!sameDatabase) {
         qDbr = new DBReader<DBKeyType>(par.db1.c_str(), par.db1Index.c_str(), par.threads, DBReader<DBKeyType>::USE_INDEX | DBReader<DBKeyType>::USE_DATA);
         qDbr->open(DBReader<DBKeyType>::NOSORT);
-        if (par.preloadMode != Parameters::PRELOAD_MODE_MMAP) {
+        if (touch) {
             qDbr->readMmapedDataInMemory();
         }
     } else {
@@ -99,8 +102,11 @@ int result2profile(int argc, const char **argv, const Command &command, bool ret
     // qDbr->readMmapedDataInMemory();
     // make sure to touch target after query, so if there is not enough memory for the query, at least the targets
     // might have had enough space left to be residung in the page cache
-    if (sameDatabase == false && templateDBIsIndex == false && par.preloadMode != Parameters::PRELOAD_MODE_MMAP) {
+    if (sameDatabase == false && templateDBIsIndex == false && touch) {
         tDbr->readMmapedDataInMemory();
+    }
+    if (preloadMode == Parameters::PRELOAD_MODE_MMAP_TOUCH) {
+        Matcher::prefetchTargetData(resultReader, *tDbr, dbFrom, dbSize);
     }
 
     int type = Parameters::DBTYPE_HMM_PROFILE;

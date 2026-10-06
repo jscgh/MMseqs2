@@ -89,10 +89,13 @@ int expandaln(int argc, const char **argv, const Command& command, bool returnAl
     }
     std::sort(qid_vec.begin(), qid_vec.end());
 
+    const int preloadMode = par.preloadMode == Parameters::PRELOAD_MODE_AUTO
+                            ? Parameters::PRELOAD_MODE_MMAP_TOUCH
+                            : par.preloadMode;
     DBReader<DBKeyType> aReader(par.db1.c_str(), par.db1Index.c_str(), par.threads, DBReader<DBKeyType>::USE_INDEX | DBReader<DBKeyType>::USE_DATA);
     aReader.open(DBReader<DBKeyType>::NOSORT);
     const int aSeqDbType = aReader.getDbtype();
-    if (par.preloadMode != Parameters::PRELOAD_MODE_MMAP) {
+    if (preloadMode != Parameters::PRELOAD_MODE_MMAP) {
         aReader.readMmapedDataInMemory();
     }
 
@@ -103,8 +106,8 @@ int expandaln(int argc, const char **argv, const Command& command, bool returnAl
     IndexReader *cReaderIdx = NULL;
     DBReader<DBKeyType> *resultBcReader = NULL;
     IndexReader *resultBcReaderIdx = NULL;
+    const bool touch = preloadMode == Parameters::PRELOAD_MODE_FREAD;
     if (Parameters::isEqualDbtype(FileUtil::parseDbType(par.db2.c_str()), Parameters::DBTYPE_INDEX_DB)) {
-        bool touch = (par.preloadMode != Parameters::PRELOAD_MODE_MMAP);
         cReaderIdx = new IndexReader(par.db2, par.threads,
                                      IndexReader::SRC_SEQUENCES,
                                      (touch) ? (IndexReader::PRELOAD_INDEX | IndexReader::PRELOAD_DATA) : 0);
@@ -116,13 +119,13 @@ int expandaln(int argc, const char **argv, const Command& command, bool returnAl
     } else {
         cReader = new DBReader<DBKeyType>(par.db2.c_str(), par.db2Index.c_str(), par.threads, DBReader<DBKeyType>::USE_INDEX | DBReader<DBKeyType>::USE_DATA);
         cReader->open(DBReader<DBKeyType>::NOSORT);
-        if (par.preloadMode != Parameters::PRELOAD_MODE_MMAP) {
+        if (touch) {
             cReader->readMmapedDataInMemory();
         }
 
         resultBcReader = new DBReader<DBKeyType>(par.db4.c_str(), par.db4Index.c_str(), par.threads, DBReader<DBKeyType>::USE_INDEX | DBReader<DBKeyType>::USE_DATA);
         resultBcReader->open(DBReader<DBKeyType>::NOSORT);
-        if (par.preloadMode != Parameters::PRELOAD_MODE_MMAP) {
+        if (touch) {
             resultBcReader->readMmapedDataInMemory();
         }
     }
@@ -153,6 +156,86 @@ int expandaln(int argc, const char **argv, const Command& command, bool returnAl
     SubstitutionMatrix subMat(par.scoringMatrixFile.values.aminoacid().c_str(), 2.0, par.scoreBias);
 
     const bool filterBc = par.expandFilterClusters;
+    if (preloadMode == Parameters::PRELOAD_MODE_MMAP_TOUCH) {
+        const bool needsTargetData = filterBc || returnAlnRes == false ||
+                                     par.expansionMode == Parameters::EXPAND_RESCORE_BACKTRACE;
+        std::vector<size_t> alignmentIds;
+        alignmentIds.reserve(Matcher::PREFETCH_BATCH_SIZE);
+        std::vector<size_t> sequenceIds;
+        sequenceIds.reserve(Matcher::PREFETCH_BATCH_SIZE);
+        std::vector<Matcher::result_t> prefetchResults;
+        size_t prefetchBudget = Matcher::PREFETCH_MAX_BYTES;
+        const auto flushSequences = [&]() {
+            if (sequenceIds.empty()) {
+                return prefetchBudget != 0;
+            }
+            const size_t touchedBytes = cReader->prefetchData(sequenceIds, prefetchBudget);
+            prefetchBudget -= touchedBytes;
+            sequenceIds.clear();
+            return touchedBytes != 0 && prefetchBudget != 0;
+        };
+        const auto flushAlignments = [&]() {
+            if (alignmentIds.empty()) {
+                return prefetchBudget != 0;
+            }
+            const size_t touchedBytes = resultBcReader->prefetchData(alignmentIds, prefetchBudget);
+            prefetchBudget -= touchedBytes;
+            bool keepPrefetching = touchedBytes != 0 && prefetchBudget != 0;
+            if (needsTargetData && keepPrefetching) {
+                for (size_t id : alignmentIds) {
+                    Matcher::readAlignmentResults(prefetchResults, resultBcReader->getData(id, 0), false);
+                    for (const Matcher::result_t &result : prefetchResults) {
+                        const size_t sequenceId = cReader->getId(result.dbKey);
+                        if (sequenceId != DB_ENTRY_NOT_FOUND) {
+                            sequenceIds.push_back(sequenceId);
+                            if (sequenceIds.size() >= Matcher::PREFETCH_BATCH_SIZE) {
+                                keepPrefetching = flushSequences();
+                                if (keepPrefetching == false) {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    prefetchResults.clear();
+                    if (keepPrefetching == false) {
+                        break;
+                    }
+                }
+            }
+            alignmentIds.clear();
+            return keepPrefetching;
+        };
+        bool keepPrefetching = true;
+        for (size_t i = 0; i < resultAbReader->getSize(); ++i) {
+            char *data = resultAbReader->getData(i, 0);
+            while (*data != '\0') {
+                Matcher::result_t resultAb = Matcher::parseAlignmentRecord(data, false);
+                data = Util::skipLine(data);
+                if (returnAlnRes == false && resultAb.eval > par.evalProfile) {
+                    continue;
+                }
+                const size_t id = resultBcReader->getId(resultAb.dbKey);
+                if (id != DB_ENTRY_NOT_FOUND) {
+                    alignmentIds.push_back(id);
+                    if (alignmentIds.size() >= Matcher::PREFETCH_BATCH_SIZE) {
+                        keepPrefetching = flushAlignments();
+                        if (keepPrefetching == false) {
+                            break;
+                        }
+                    }
+                }
+            }
+            if (keepPrefetching == false) {
+                break;
+            }
+        }
+        if (keepPrefetching) {
+            keepPrefetching = flushAlignments();
+        }
+        if (keepPrefetching && sequenceIds.empty() == false) {
+            flushSequences();
+        }
+    }
     EvalueComputation *evaluer = NULL;
     ProbabilityMatrix *probMatrix = NULL;
     if (returnAlnRes == false) {

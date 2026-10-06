@@ -43,7 +43,10 @@ int result2msa(int argc, const char **argv, const Command &command) {
         return EXIT_FAILURE;
     }
     uint16_t extended = DBReader<DBKeyType>::getExtendedDbtype(FileUtil::parseDbType(par.db3.c_str()));
-    bool touch = (par.preloadMode != Parameters::PRELOAD_MODE_MMAP);
+    const int preloadMode = par.preloadMode == Parameters::PRELOAD_MODE_AUTO
+                            ? Parameters::PRELOAD_MODE_MMAP_TOUCH
+                            : par.preloadMode;
+    const bool touch = preloadMode == Parameters::PRELOAD_MODE_FREAD;
     tDbrIdx = new IndexReader(par.db2, par.threads,
                               extended & Parameters::DBTYPE_EXTENDED_INDEX_NEED_SRC ? IndexReader::SRC_SEQUENCES : IndexReader::SEQUENCES,
                               (touch) ? (IndexReader::PRELOAD_INDEX | IndexReader::PRELOAD_DATA) : 0);
@@ -58,12 +61,12 @@ int result2msa(int argc, const char **argv, const Command &command) {
     if (!sameDatabase) {
         qDbr = new DBReader<DBKeyType>(par.db1.c_str(), par.db1Index.c_str(), par.threads, DBReader<DBKeyType>::USE_INDEX | DBReader<DBKeyType>::USE_DATA);
         qDbr->open(DBReader<DBKeyType>::NOSORT);
-        if (par.preloadMode != Parameters::PRELOAD_MODE_MMAP) {
+        if (touch) {
             qDbr->readMmapedDataInMemory();
         }
         queryHeaderReader = new DBReader<DBKeyType>(par.hdr1.c_str(), par.hdr1Index.c_str(), par.threads, DBReader<DBKeyType>::USE_INDEX | DBReader<DBKeyType>::USE_DATA);
         queryHeaderReader->open(DBReader<DBKeyType>::NOSORT);
-        if (par.preloadMode != Parameters::PRELOAD_MODE_MMAP) {
+        if (touch) {
             queryHeaderReader->readMmapedDataInMemory();
         }
     } else {
@@ -107,6 +110,16 @@ int result2msa(int argc, const char **argv, const Command &command) {
     dbSize = resultReader.getSize();
     std::pair<std::string, std::string> tmpOutput = std::make_pair(outDb, outIndex);
 #endif
+
+    if (preloadMode == Parameters::PRELOAD_MODE_MMAP_TOUCH) {
+        size_t prefetchBudget = Matcher::PREFETCH_MAX_BYTES;
+        prefetchBudget -= Matcher::prefetchTargetData(resultReader, *tDbr, dbFrom, dbSize,
+                                                       Matcher::PREFETCH_BATCH_SIZE, prefetchBudget);
+        if (prefetchBudget != 0) {
+            Matcher::prefetchTargetData(resultReader, *targetHeaderReader, dbFrom, dbSize,
+                                        Matcher::PREFETCH_BATCH_SIZE, prefetchBudget);
+        }
+    }
 
     size_t localThreads = 1;
 #ifdef OPENMP
